@@ -1,0 +1,2172 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>股票分析 - 股票预测系统</title>
+    <link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/common.css') }}" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" />
+    <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/apexcharts"></script>
+    <style>
+        .analysis-form {
+            padding: 16px;
+            display: grid;
+            gap: 12px;
+        }
+
+        .analysis-form-row {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+
+        .analysis-form-row .input-group {
+            flex: 1 1 220px;
+            min-width: 200px;
+        }
+
+        .analysis-form .input-group {
+            display: flex;
+            align-items: stretch;
+            border: 1px solid var(--border);
+            border-radius: 999px;
+            overflow: hidden;
+            background: rgba(15, 23, 42, 0.40);
+        }
+
+        body.light .analysis-form .input-group {
+            background: rgba(255, 255, 255, 0.70);
+        }
+
+        .analysis-form .input-group:focus-within {
+            border-color: rgba(110, 168, 255, 0.55);
+            box-shadow: 0 0 0 4px rgba(110, 168, 255, 0.12);
+        }
+
+        body.light .analysis-form .input-group:focus-within {
+            border-color: rgba(37, 99, 235, 0.45);
+            box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.10);
+        }
+
+        .analysis-form .input-group-text {
+            flex: 0 0 auto;
+            padding: 8px 12px;
+            font-size: 12px;
+            font-weight: 700;
+            color: var(--muted);
+            border-right: 1px solid rgba(255, 255, 255, 0.12);
+            background: rgba(255, 255, 255, 0.04);
+            white-space: nowrap;
+        }
+
+        body.light .analysis-form .input-group-text {
+            border-right: 1px solid rgba(2, 6, 23, 0.12);
+            background: rgba(2, 6, 23, 0.03);
+        }
+
+        .analysis-form .form-control,
+        .analysis-form .form-select {
+            flex: 1 1 auto;
+            width: 100%;
+            padding: 8px 12px;
+            padding-right: 36px;
+            font-size: 13px;
+            border: 0;
+            outline: none;
+            background: transparent;
+            color: var(--text);
+        }
+
+        html:not(.light) .analysis-form .form-select {
+            color-scheme: dark;
+        }
+
+        html.light .analysis-form .form-select {
+            color-scheme: light;
+        }
+
+        .analysis-form .form-select {
+            -webkit-appearance: none;
+            -moz-appearance: none;
+            appearance: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='rgba(255,255,255,0.66)' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 12px center;
+            background-size: 16px 16px;
+        }
+
+        body.light .analysis-form .form-select {
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='rgba(2,6,23,0.66)' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+        }
+
+        .analysis-form .form-select::-ms-expand {
+            display: none;
+        }
+
+        html:not(.light) .analysis-form option {
+            background-color: #0b1220;
+            color: rgba(255, 255, 255, 0.92);
+        }
+
+        html.light .analysis-form option {
+            background-color: #ffffff;
+            color: rgba(2, 6, 23, 0.92);
+        }
+
+        .analysis-form .form-control::placeholder {
+            color: var(--muted-2);
+        }
+
+        .analysis-form .analysis-submit {
+            width: 100%;
+            padding: 10px 14px;
+            border-radius: 999px;
+            border: 1px solid rgba(110, 168, 255, 0.55);
+            background: linear-gradient(135deg, rgba(110, 168, 255, 0.80), rgba(103, 232, 249, 0.55));
+            color: rgba(2, 6, 23, 0.92);
+            font-size: 13px;
+            font-weight: 900;
+            cursor: pointer;
+        }
+
+        .analysis-form .analysis-submit:hover {
+            box-shadow: 0 0 0 4px rgba(110, 168, 255, 0.12);
+        }
+
+        .analysis-form .analysis-submit:disabled {
+            opacity: 0.65;
+            cursor: not-allowed;
+        }
+
+        .row {
+            display: flex;
+            flex-wrap: wrap;
+        }
+
+        .row.g-3 {
+            margin: -12px;
+        }
+
+        .row.g-3 > * {
+            padding: 12px;
+        }
+
+        .col-12 {
+            flex: 0 0 100%;
+            max-width: 100%;
+        }
+
+        .col-md-4,
+        .col-md-5,
+        .col-md-6,
+        .col-md-7,
+        .col-md-8 {
+            flex: 0 0 100%;
+            max-width: 100%;
+        }
+
+        @media (min-width: 768px) {
+            .col-md-4 {
+                flex: 0 0 33.3333%;
+                max-width: 33.3333%;
+            }
+            .col-md-5 {
+                flex: 0 0 41.6667%;
+                max-width: 41.6667%;
+            }
+            .col-md-6 {
+                flex: 0 0 50%;
+                max-width: 50%;
+            }
+            .col-md-7 {
+                flex: 0 0 58.3333%;
+                max-width: 58.3333%;
+            }
+            .col-md-8 {
+                flex: 0 0 66.6667%;
+                max-width: 66.6667%;
+            }
+        }
+
+        .mb-0 {
+            margin-bottom: 0;
+        }
+
+        .mb-3 {
+            margin-bottom: 16px;
+        }
+
+        .mt-1 {
+            margin-top: 6px;
+        }
+
+        .mt-2 {
+            margin-top: 10px;
+        }
+
+        .mt-3 {
+            margin-top: 14px;
+        }
+
+        .p-0 {
+            padding: 0;
+        }
+
+        .py-2 {
+            padding-top: 10px;
+            padding-bottom: 10px;
+        }
+
+        .text-end {
+            text-align: right;
+        }
+
+        .text-muted {
+            color: var(--muted);
+        }
+
+        .small {
+            font-size: 12px;
+        }
+
+        .fs-4 {
+            font-size: 22px;
+        }
+
+        .list-unstyled {
+            list-style: none;
+            padding-left: 0;
+        }
+
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            padding: 4px 10px;
+            border-radius: 999px;
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            background: rgba(15, 23, 42, 0.40);
+            color: var(--text);
+            font-size: 12px;
+            font-weight: 800;
+        }
+
+        body.light .badge {
+            border: 1px solid rgba(2, 6, 23, 0.12);
+            background: rgba(255, 255, 255, 0.70);
+            color: rgba(2, 6, 23, 0.86);
+        }
+
+        .badge.bg-danger {
+            border-color: rgba(239, 68, 68, 0.35);
+        }
+
+        .badge.bg-warning {
+            border-color: rgba(245, 158, 11, 0.35);
+        }
+
+        .badge.bg-success {
+            border-color: rgba(34, 197, 94, 0.35);
+        }
+
+        .badge.bg-info {
+            border-color: rgba(56, 189, 248, 0.35);
+        }
+
+        .trend-up {
+            color: rgba(52, 211, 153, 0.95);
+            font-weight: 800;
+        }
+
+        .trend-down {
+            color: rgba(248, 113, 113, 0.95);
+            font-weight: 800;
+        }
+
+        .score-pill {
+            border: 1px solid rgba(110, 168, 255, 0.35);
+            background: rgba(110, 168, 255, 0.12);
+        }
+
+        .score-good {
+            border-color: rgba(34, 197, 94, 0.35);
+            background: rgba(34, 197, 94, 0.12);
+        }
+
+        .score-mid {
+            border-color: rgba(245, 158, 11, 0.35);
+            background: rgba(245, 158, 11, 0.12);
+        }
+
+        .score-bad {
+            border-color: rgba(239, 68, 68, 0.35);
+            background: rgba(239, 68, 68, 0.12);
+        }
+
+        .analysis-section {
+            min-height: 120px;
+        }
+
+        .analysis-para {
+            margin: 0;
+            color: var(--text);
+            font-size: 13px;
+            line-height: 1.6;
+        }
+
+        .analysis-para + .analysis-para {
+            margin-top: 10px;
+        }
+
+        .keyword {
+            color: rgba(110, 168, 255, 0.95);
+            font-weight: 900;
+        }
+
+        .term {
+            color: rgba(103, 232, 249, 0.95);
+            font-weight: 900;
+        }
+
+        .price {
+            font-weight: 900;
+        }
+
+        .table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+        }
+
+        .table th,
+        .table td {
+            padding: 10px 10px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.10);
+            text-align: left;
+        }
+
+        body.light .table th,
+
+        body.light .table td {
+            border-bottom: 1px solid rgba(2, 6, 23, 0.10);
+        }
+
+        .spinner-border {
+            width: 28px;
+            height: 28px;
+            border: 3px solid rgba(110, 168, 255, 0.25);
+            border-top-color: rgba(110, 168, 255, 0.85);
+            border-radius: 50%;
+            animation: spin 800ms linear infinite;
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        .visually-hidden {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            padding: 0;
+            margin: -1px;
+            overflow: hidden;
+            clip: rect(0, 0, 0, 0);
+            white-space: nowrap;
+            border: 0;
+        }
+
+        #analysis-error {
+            display: none;
+            padding: 10px 12px;
+            border-radius: 12px;
+            border: 1px solid rgba(239, 68, 68, 0.35);
+            background: rgba(239, 68, 68, 0.12);
+            color: rgba(255, 255, 255, 0.92);
+            font-size: 13px;
+            font-weight: 700;
+        }
+
+        body.light #analysis-error {
+            color: rgba(2, 6, 23, 0.92);
+        }
+
+        .h-100 {
+            height: 100%;
+        }
+
+            .text-muted {
+                color: var(--muted);
+            }
+
+            .small {
+                font-size: 12px;
+            }
+
+            .fs-4 {
+                font-size: 22px;
+            }
+
+        .summary-grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 10px;
+        }
+
+        @media (min-width: 768px) {
+            .summary-grid {
+                grid-template-columns: repeat(3, 1fr);
+            }
+        }
+
+        .summary-price {
+            display: grid;
+            gap: 12px;
+        }
+
+        .summary-price-top {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 12px;
+        }
+
+        .summary-price-meta {
+            min-width: 0;
+        }
+
+        .summary-price-meta h2 {
+            margin: 0;
+            font-size: 18px;
+            font-weight: 900;
+            line-height: 1.2;
+        }
+
+        .summary-price-meta p {
+            margin: 6px 0 0;
+        }
+
+        .summary-price-quote {
+            text-align: right;
+        }
+
+        .summary-price-quote h3 {
+            margin: 0;
+            font-size: 22px;
+            font-weight: 900;
+        }
+
+        .summary-price-quote p {
+            margin: 6px 0 0;
+        }
+
+        .summary-reco {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            padding-top: 10px;
+            border-top: 1px solid rgba(255, 255, 255, 0.10);
+        }
+
+        body.light .summary-reco {
+            border-top: 1px solid rgba(2, 6, 23, 0.10);
+        }
+
+        .metric-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 10px;
+        }
+
+        .metric-item {
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: 14px;
+            background: rgba(15, 23, 42, 0.32);
+            padding: 10px 12px;
+            min-height: 62px;
+            display: grid;
+            gap: 6px;
+        }
+
+        body.light .metric-item {
+            border: 1px solid rgba(2, 6, 23, 0.12);
+            background: rgba(255, 255, 255, 0.60);
+        }
+
+        .metric-label {
+            font-size: 12px;
+            font-weight: 800;
+            color: var(--muted);
+        }
+
+        .metric-value {
+            font-size: 16px;
+            font-weight: 900;
+            color: var(--text);
+            line-height: 1.1;
+        }
+
+        .chart-tabs {
+            display: flex;
+            gap: 10px;
+            padding: 12px 14px 0;
+        }
+
+        .chart-tab {
+            border: 0;
+            background: transparent;
+            color: var(--muted);
+            font-size: 13px;
+            font-weight: 900;
+            padding: 10px 8px;
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+        }
+
+        .chart-tab.active {
+            color: rgba(110, 168, 255, 0.95);
+            border-bottom-color: rgba(110, 168, 255, 0.85);
+        }
+
+        .chart-panel {
+            display: none;
+        }
+
+        .chart-panel.active {
+            display: block;
+        }
+
+        body {
+            background: var(--bg) !important;
+            background-attachment: fixed;
+        }
+
+        body.light {
+            background: var(--bg) !important;
+            background-attachment: fixed;
+        }
+
+        #analysis-result {
+            margin-top: 15px !important;
+            padding-top: 6px;
+        }
+
+        .card-header h5 {
+            font-size: 20px !important;
+        }
+
+        #indicators-chart .apexcharts-legend {
+            display: flex !important;
+            justify-content: center !important;
+            flex-direction: row !important;
+            flex-wrap: wrap !important;
+            max-height: none !important;
+            overflow: visible !important;
+            gap: 6px 10px;
+        }
+
+        #indicators-chart .apexcharts-legend-series {
+            display: flex !important;
+            align-items: center !important;
+            white-space: nowrap !important;
+            flex: 0 0 auto !important;
+            width: auto !important;
+            margin: 4px 10px !important;
+        }
+
+        #indicators-chart .apexcharts-legend-text {
+            display: inline !important;
+            white-space: nowrap !important;
+        }
+
+        #volume-chart .apexcharts-legend {
+            display: flex !important;
+            justify-content: center !important;
+            flex-direction: row !important;
+            flex-wrap: wrap !important;
+            max-height: none !important;
+            overflow: visible !important;
+            gap: 6px 10px;
+        }
+
+        #volume-chart .apexcharts-legend-series {
+            display: flex !important;
+            align-items: center !important;
+            white-space: nowrap !important;
+            flex: 0 0 auto !important;
+            width: auto !important;
+            margin: 4px 10px !important;
+        }
+
+        #volume-chart .apexcharts-legend-text {
+            display: inline !important;
+            white-space: nowrap !important;
+        }
+
+        #indicators-chart .apexcharts-legend-marker {
+            margin-right: 6px !important;
+        }
+
+        #radar-chart {
+            width: calc(100% + 28px);
+            margin-left: -18px;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <div class="topbar">
+            <div class="brand">
+                <div class="logo" aria-hidden="true"></div>
+                <div style="min-width: 0;">
+                    <h1>股票预测系统</h1>
+                </div>
+            </div>
+
+            <nav class="topnav" aria-label="主导航">
+                <a class="nav-item" href="/">首页</a>
+                <a class="nav-item" href="/analysis">股票分析</a>
+                <a class="nav-item" href="/predict">股票预测</a>
+            </nav>
+
+            <label class="switch">
+                <input id="input" type="checkbox" />
+                <div class="slider round">
+                    <div class="sun-moon">
+                        <svg id="moon-dot-1" class="moon-dot" viewBox="0 0 100 100">
+                            <circle cx="50" cy="50" r="50"></circle>
+                        </svg>
+                        <svg id="moon-dot-2" class="moon-dot" viewBox="0 0 100 100">
+                            <circle cx="50" cy="50" r="50"></circle>
+                        </svg>
+                        <svg id="moon-dot-3" class="moon-dot" viewBox="0 0 100 100">
+                            <circle cx="50" cy="50" r="50"></circle>
+                        </svg>
+                        <svg id="light-ray-1" class="light-ray" viewBox="0 0 100 100">
+                            <circle cx="50" cy="50" r="50"></circle>
+                        </svg>
+                        <svg id="light-ray-2" class="light-ray" viewBox="0 0 100 100">
+                            <circle cx="50" cy="50" r="50"></circle>
+                        </svg>
+                        <svg id="light-ray-3" class="light-ray" viewBox="0 0 100 100">
+                            <circle cx="50" cy="50" r="50"></circle>
+                        </svg>
+
+                        <svg id="cloud-1" class="cloud-dark" viewBox="0 0 100 100">
+                            <circle cx="50" cy="50" r="50"></circle>
+                        </svg>
+                        <svg id="cloud-2" class="cloud-dark" viewBox="0 0 100 100">
+                            <circle cx="50" cy="50" r="50"></circle>
+                        </svg>
+                        <svg id="cloud-3" class="cloud-dark" viewBox="0 0 100 100">
+                            <circle cx="50" cy="50" r="50"></circle>
+                        </svg>
+                        <svg id="cloud-4" class="cloud-light" viewBox="0 0 100 100">
+                            <circle cx="50" cy="50" r="50"></circle>
+                        </svg>
+                        <svg id="cloud-5" class="cloud-light" viewBox="0 0 100 100">
+                            <circle cx="50" cy="50" r="50"></circle>
+                        </svg>
+                        <svg id="cloud-6" class="cloud-light" viewBox="0 0 100 100">
+                            <circle cx="50" cy="50" r="50"></circle>
+                        </svg>
+                    </div>
+                    <div class="stars">
+                        <svg id="star-1" class="star" viewBox="0 0 20 20">
+                            <path
+                              d="M 0 10 C 10 10,10 10 ,0 10 C 10 10 , 10 10 , 10 20 C 10 10 , 10 10 , 20 10 C 10 10 , 10 10 , 10 0 C 10 10,10 10 ,0 10 Z"
+                            ></path>
+                        </svg>
+                        <svg id="star-2" class="star" viewBox="0 0 20 20">
+                            <path
+                              d="M 0 10 C 10 10,10 10 ,0 10 C 10 10 , 10 10 , 10 20 C 10 10 , 10 10 , 20 10 C 10 10 , 10 10 , 10 0 C 10 10,10 10 ,0 10 Z"
+                            ></path>
+                        </svg>
+                        <svg id="star-3" class="star" viewBox="0 0 20 20">
+                            <path
+                              d="M 0 10 C 10 10,10 10 ,0 10 C 10 10 , 10 10 , 10 20 C 10 10 , 10 10 , 20 10 C 10 10 , 10 10 , 10 0 C 10 10,10 10 ,0 10 Z"
+                            ></path>
+                        </svg>
+                        <svg id="star-4" class="star" viewBox="0 0 20 20">
+                            <path
+                              d="M 0 10 C 10 10,10 10 ,0 10 C 10 10 , 10 10 , 10 20 C 10 10 , 10 10 , 20 10 C 10 10 , 10 10 , 10 0 C 10 10,10 10 ,0 10 Z"
+                            ></path>
+                        </svg>
+                    </div>
+                </div>
+            </label>
+        </div>
+
+        <section class="section">
+            <div class="card">
+                <div class="card-header">
+                    <h2>智能股票分析</h2>
+                    <div class="hint">数据来源：<a href="https://www.tushare.pro/" target="_blank">Tushare</a>,<a href="https://akshare.akfamily.xyz/" target="_blank">akshare</a>,<a href="http://baostock.com/" target="_blank">baostock</a></div>
+                </div>
+
+                <form id="analysis-form" class="analysis-form">
+                    <div class="analysis-form-row">
+                        <div class="input-group input-group-sm">  <!-- 添加input-group-sm使输入框更小 -->
+                            <span class="input-group-text">股票代码</span>
+                            <input type="text" class="form-control" id="stock-code" placeholder="例如: 600519" required>
+                        </div>
+
+                        <div class="input-group input-group-sm">  <!-- 添加input-group-sm使下拉框更小 -->
+                            <span class="input-group-text">市场</span>
+                            <select class="form-select" id="market-type">
+                                <option value="A" selected>A股</option>
+                                <option value="HK">港股</option>
+                                <option value="US">美股</option>
+                            </select>
+                        </div>
+
+                        <div class="input-group input-group-sm">  <!-- 添加input-group-sm使下拉框更小 -->
+                            <span class="input-group-text">周期</span>
+                            <select class="form-select" id="analysis-period">
+                                <option value="1m">1个月</option>
+                                <option value="3m">3个月</option>
+                                <option value="6m">6个月</option>
+                                <option value="1y" selected>1年</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <button type="submit" class="btn btn-primary btn-sm w-100 analysis-submit">  <!-- 使用btn-sm减小按钮尺寸 -->
+                        <i class="fas fa-chart-line"></i> 分析
+                    </button>
+
+                    <div id="analysis-error"></div>
+                </form>
+
+            </div>
+        </section>
+
+        <div id="analysis-result" style="display: none;">
+        <div class="row g-3 mb-3">
+            <div class="col-12">
+                <div class="summary-grid">
+                    <div class="card h-100">
+                        <div class="card-body">
+                            <div class="summary-price">
+                                <div class="summary-price-top">
+                                    <div class="summary-price-meta">
+                                        <h2 id="stock-name"></h2>
+                                        <p id="stock-info" class="text-muted small"></p>
+                                    </div>
+                                    <div class="summary-price-quote">
+                                        <h3 id="stock-price"></h3>
+                                        <p id="price-change"></p>
+                                    </div>
+                                </div>
+                                <div class="summary-reco">
+                                    <div class="text-muted small">投资建议</div>
+                                    <div id="recommendation" class="metric-value"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card h-100">
+                        <div class="card-header py-2">
+                            <h5 class="mb-0">综合评分</h5>
+                        </div>
+                        <div class="card-body">
+                            <div id="score-gauge" style="height: 180px;"></div>
+                            <div id="total-score" style="display:none"></div>
+                        </div>
+                    </div>
+
+                    <div class="card h-100">
+                        <div class="card-header py-2">
+                            <h5 class="mb-0">关键指标</h5>
+                        </div>
+                        <div class="card-body">
+                            <div class="metric-grid">
+                                <div class="metric-item">
+                                    <div class="metric-label">RSI</div>
+                                    <div id="rsi-value" class="metric-value"></div>
+                                </div>
+                                <div class="metric-item">
+                                    <div class="metric-label">均线趋势</div>
+                                    <div id="ma-trend" class="metric-value"></div>
+                                </div>
+                                <div class="metric-item">
+                                    <div class="metric-label">MACD</div>
+                                    <div id="macd-signal" class="metric-value"></div>
+                                </div>
+                                <div class="metric-item">
+                                    <div class="metric-label">波动率</div>
+                                    <div id="volatility" class="metric-value"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row g-3 mb-3">
+            <div class="col-12">
+                <div class="card">
+                    <div class="chart-tabs" role="tablist" aria-label="图表切换">
+                        <button class="chart-tab active" type="button" data-tab="price">价格趋势</button>
+                        <button class="chart-tab" type="button" data-tab="indicators">技术指标</button>
+                        <button class="chart-tab" type="button" data-tab="volume">成交量</button>
+                    </div>
+                    <div class="card-body p-0">
+                        <div id="chart-panel-price" class="chart-panel active">
+                            <div id="price-trend-chart" style="height: 420px;"></div>
+                        </div>
+                        <div id="chart-panel-indicators" class="chart-panel">
+                            <div id="indicators-chart" style="height: 420px;"></div>
+                        </div>
+                        <div id="chart-panel-volume" class="chart-panel">
+                            <div id="volume-chart" style="height: 420px;"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row g-3 mb-3">
+            <div class="col-md-7">
+                <div class="card h-100">
+                    <div class="card-header py-2">
+                        <h5 class="mb-0">支撑与压力位</h5>
+                    </div>
+                    <div class="card-body">
+                        <table class="table table-sm">
+                            <thead>
+                                <tr>
+                                    <th>类型</th>
+                                    <th>价格</th>
+                                    <th>距离</th>
+                                </tr>
+                            </thead>
+                            <tbody id="support-resistance-table">
+                                <!-- 支撑压力位数据将在JS中动态填充 -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-5">
+                <div class="card h-100">
+                    <div class="card-header py-2">
+                        <h5 class="mb-0">多维度评分</h5>
+                    </div>
+                    <div class="card-body">
+                        <div id="radar-chart" style="height: 200px;"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row g-3 mb-3">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header py-2">
+                        <h5 class="mb-0">AI分析报告</h5>
+                    </div>
+                    <div class="card-body">
+                        <div id="ai-analysis" class="analysis-section">
+                            <!-- AI分析结果将在JS中动态填充 -->
+                            <div class="loading">
+                                <div class="spinner-border text-primary" role="status">
+                                    <span class="visually-hidden">Loading...</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+        <footer>
+            <div>© 基于Flask的股票预测管理系统设计与实现</div>
+        </footer>
+    </div>
+
+    <script>
+        (function () {
+            var THEME_KEY = 'theme';
+            var toggle = document.getElementById('input');
+            if (!toggle) return;
+
+            function getInitialTheme() {
+                try {
+                    var saved = localStorage.getItem(THEME_KEY);
+                    if (saved === 'light' || saved === 'dark') return saved;
+                } catch (e) {}
+                return 'dark';
+            }
+
+            function applyTheme(theme) {
+                var isLight = theme === 'light';
+                document.documentElement.classList.toggle('light', isLight);
+                document.body.classList.toggle('light', isLight);
+                document.documentElement.setAttribute('data-theme', isLight ? 'light' : 'dark');
+                toggle.checked = !isLight;
+                try {
+                    localStorage.setItem(THEME_KEY, theme);
+                } catch (e) {}
+            }
+
+            var currentTheme = getInitialTheme();
+            var isAnimating = false;
+            applyTheme(currentTheme);
+
+            function prefersReducedMotion() {
+                return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+            }
+
+            function getSwitchCenter() {
+                var el = toggle.closest('.switch') || toggle;
+                var rect = el.getBoundingClientRect();
+                return {
+                    x: rect.left + rect.width / 2,
+                    y: rect.top + rect.height / 2
+                };
+            }
+
+            function transitionTheme(nextTheme, done) {
+                if (prefersReducedMotion() || !document.startViewTransition) {
+                    applyTheme(nextTheme);
+                    currentTheme = nextTheme;
+                    done();
+                    return;
+                }
+
+                var p = getSwitchCenter();
+                var dx = Math.max(p.x, window.innerWidth - p.x);
+                var dy = Math.max(p.y, window.innerHeight - p.y);
+                var endRadius = Math.ceil(Math.sqrt(dx * dx + dy * dy)) + 30;
+
+                var expand = currentTheme === 'dark' && nextTheme === 'light';
+                var clipFrom = expand
+                    ? 'circle(0px at ' + p.x + 'px ' + p.y + 'px)'
+                    : 'circle(' + endRadius + 'px at ' + p.x + 'px ' + p.y + 'px)';
+                var clipTo = expand
+                    ? 'circle(' + endRadius + 'px at ' + p.x + 'px ' + p.y + 'px)'
+                    : 'circle(0px at ' + p.x + 'px ' + p.y + 'px)';
+                var pseudo = expand ? '::view-transition-new(root)' : '::view-transition-old(root)';
+
+                var zVarsApplied = false;
+                if (!expand) {
+                    zVarsApplied = true;
+                    document.documentElement.style.setProperty('--vt-old-z', '2');
+                    document.documentElement.style.setProperty('--vt-new-z', '1');
+                }
+
+                var vt;
+                try {
+                    vt = document.startViewTransition(function () {
+                        applyTheme(nextTheme);
+                    });
+                    currentTheme = nextTheme;
+                } catch (e) {
+                    applyTheme(nextTheme);
+                    currentTheme = nextTheme;
+                    done();
+                    return;
+                }
+
+                vt.ready.then(function () {
+                    document.documentElement.animate(
+                        { clipPath: [clipFrom, clipTo] },
+                        {
+                            duration: 520,
+                            easing: 'cubic-bezier(0.2, 0.9, 0.2, 1)',
+                            pseudoElement: pseudo,
+                            fill: 'both'
+                        }
+                    );
+                });
+
+                vt.finished.then(function () {
+                    if (zVarsApplied) {
+                        document.documentElement.style.removeProperty('--vt-old-z');
+                        document.documentElement.style.removeProperty('--vt-new-z');
+                    }
+                    done();
+                }, function () {
+                    if (zVarsApplied) {
+                        document.documentElement.style.removeProperty('--vt-old-z');
+                        document.documentElement.style.removeProperty('--vt-new-z');
+                    }
+                    done();
+                });
+            }
+
+            toggle.addEventListener('change', function () {
+                if (isAnimating) {
+                    applyTheme(currentTheme);
+                    return;
+                }
+
+                var nextTheme = toggle.checked ? 'dark' : 'light';
+                if (nextTheme === currentTheme) return;
+
+                isAnimating = true;
+                toggle.disabled = true;
+
+                transitionTheme(nextTheme, function () {
+                    toggle.disabled = false;
+                    isAnimating = false;
+                });
+            });
+        })();
+
+
+
+
+
+
+    let stockData = [];
+        let analysisResult = null;
+
+    let activeChartTab = 'price';
+    let renderedTabs = { price: false, indicators: false, volume: false };
+    let chartTabsInitialized = false;
+
+    // === THEME-AWARE CHART LOGIC START ===
+    let charts = {}; // Store chart instances
+
+    function getApexChartThemeOptions() {
+        const isDarkMode = $('html').attr('data-theme') === 'dark';
+        const options = {
+            theme: {
+                mode: isDarkMode ? 'dark' : 'light'
+            },
+            chart: {
+                background: 'transparent'
+            },
+            tooltip: {
+                theme: isDarkMode ? 'dark' : 'light'
+            }
+        };
+
+        if(isDarkMode) {
+            options.plotOptions = {
+                radar: {
+                    polygons: {
+                        strokeColors: '#555',
+                        fill: { colors: ['#393939', '#444444'] }
+                    }
+                }
+            };
+        } else {
+             options.plotOptions = {
+                radar: {
+                     polygons: {
+                        strokeColors: '#e9e9e9',
+                        fill: { colors: ['#f8f8f8', '#fff'] }
+                    }
+                }
+            };
+        }
+        return options;
+    }
+
+    function destroyAllCharts() {
+        Object.values(charts).forEach(chart => {
+            if (chart && typeof chart.destroy === 'function') {
+                chart.destroy();
+            }
+        });
+        charts = {};
+    }
+
+    function rerenderAllCharts() {
+        if (!analysisResult) return;
+        destroyAllCharts();
+        renderedTabs = { price: false, indicators: false, volume: false };
+        renderScoreGauge();
+        renderRadarChart();
+        renderActiveTabChart();
+    }
+    // === THEME-AWARE CHART LOGIC END ===
+
+
+    // 提交表单进行分析
+    $('#analysis-form').submit(function(e) {
+        e.preventDefault();
+        const stockCode = $('#stock-code').val().trim();
+        const marketType = $('#market-type').val();
+        const period = $('#analysis-period').val();
+
+        if (!stockCode) {
+            showError('请输入股票代码！');
+            return;
+        }
+
+        fetchStockData(stockCode, marketType, period);
+    });
+
+    function showLoading() {
+        $('#analysis-error').hide().text('');
+        $('.analysis-submit').prop('disabled', true);
+        $('#analysis-result').hide();
+        $('#ai-analysis').html(
+            '<div class="loading"><div class="spinner-border" role="status"><span class="visually-hidden">Loading...</span></div></div>'
+        );
+    }
+
+    function hideLoading() {
+        $('.analysis-submit').prop('disabled', false);
+    }
+
+    function showError(msg) {
+        $('#analysis-error').show().text(msg);
+    }
+
+    function formatNumber(value, decimals) {
+        const n = Number(value);
+        if (!Number.isFinite(n)) return '--';
+        return n.toFixed(decimals == null ? 2 : decimals);
+    }
+
+    function formatDateLabel(value, timestamp) {
+        const d = timestamp != null ? new Date(timestamp) : new Date(value);
+        if (!d || Number.isNaN(d.getTime())) return String(value);
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return `${y}-${m}-${day}`;
+    }
+
+    function formatPercent(value, decimals) {
+        const n = Number(value);
+        if (!Number.isFinite(n)) return '--';
+        return (n * 100).toFixed(decimals == null ? 2 : decimals) + '%';
+    }
+
+    function getScoreColorClass(score) {
+        const s = Number(score);
+        if (s >= 8) return 'score-good';
+        if (s >= 5) return 'score-mid';
+        return 'score-bad';
+    }
+
+    function getTrendColorClass(trend) {
+        if (trend === 'UP') return 'trend-up';
+        if (trend === 'DOWN') return 'trend-down';
+        return 'text-muted';
+    }
+
+    function getTrendIcon(trend) {
+        if (trend === 'UP') return '<i class="fas fa-arrow-up"></i>';
+        if (trend === 'DOWN') return '<i class="fas fa-arrow-down"></i>';
+        return '<i class="fas fa-minus"></i>';
+    }
+
+    // Observe theme changes for charts
+    const observer = new MutationObserver(function(mutations) {
+        mutations.forEach(function(mutation) {
+            if (mutation.attributeName === "data-theme") {
+                rerenderAllCharts();
+            }
+        });
+    });
+
+    observer.observe(document.documentElement, {
+        attributes: true
+    });
+
+
+    // Format AI analysis text
+    function formatAIAnalysis(text) {
+        if (!text) return '';
+
+        // First, make the text safe for HTML
+        const safeText = text
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+
+        // Replace basic Markdown elements
+        let formatted = safeText
+            // Bold text with ** or __
+            .replace(/\*\*(.*?)\*\*/g, '<strong class="keyword">$1</strong>')
+            .replace(/__(.*?)__/g, '<strong>$1</strong>')
+
+            // Italic text with * or _
+            .replace(/\*(.*?)\*/g, '<em>$1</em>')
+            .replace(/_(.*?)_/g, '<em>$1</em>')
+
+            // Headers
+            .replace(/^# (.*?)$/gm, '<h4 class="mt-3 mb-2">$1</h4>')
+            .replace(/^## (.*?)$/gm, '<h5 class="mt-2 mb-2">$1</h5>')
+
+            // Apply special styling to financial terms
+            .replace(/支撑位/g, '<span class="keyword">支撑位</span>')
+            .replace(/压力位/g, '<span class="keyword">压力位</span>')
+            .replace(/趋势/g, '<span class="keyword">趋势</span>')
+            .replace(/均线/g, '<span class="keyword">均线</span>')
+            .replace(/MACD/g, '<span class="term">MACD</span>')
+            .replace(/RSI/g, '<span class="term">RSI</span>')
+            .replace(/KDJ/g, '<span class="term">KDJ</span>')
+
+            // Highlight price patterns and movements
+            .replace(/([上涨升])/g, '<span class="trend-up">$1</span>')
+            .replace(/([下跌降])/g, '<span class="trend-down">$1</span>')
+            .replace(/(买入|做多|多头|突破)/g, '<span class="trend-up">$1</span>')
+            .replace(/(卖出|做空|空头|跌破)/g, '<span class="trend-down">$1</span>')
+
+            // Highlight price values (matches patterns like 31.25, 120.50)
+            .replace(/(\d+\.\d{2})/g, '<span class="price">$1</span>')
+
+            // Convert line breaks to paragraph tags
+            .replace(/\n\n+/g, '</p><p class="analysis-para">')
+            .replace(/\n/g, '<br>');
+
+        // Wrap in paragraph tags for consistent styling
+        return '<p class="analysis-para">' + formatted + '</p>';
+    }
+
+    // 获取股票数据
+    function fetchStockData(stockCode, marketType, period) {
+        showLoading();
+
+        $.ajax({
+            url: `/api/stock_data?stock_code=${stockCode}&market_type=${marketType}&period=${period}`,
+            type: 'GET',
+            dataType: 'json',
+            success: function(response) {
+
+                // 检查response是否有data属性
+                if (!response.data) {
+                    hideLoading();
+                    showError('响应格式不正确: 缺少data字段');
+                    return;
+                }
+
+                if (response.data.length === 0) {
+                    hideLoading();
+                    showError('未找到股票数据');
+                    return;
+                }
+
+                stockData = response.data;
+
+                // 获取增强分析数据
+                fetchEnhancedAnalysis(stockCode, marketType, period);
+            },
+            error: function(xhr, status, error) {
+                hideLoading();
+
+                let errorMsg = '获取股票数据失败';
+                if (xhr.responseJSON && xhr.responseJSON.error) {
+                    errorMsg += ': ' + xhr.responseJSON.error;
+                } else if (error) {
+                    errorMsg += ': ' + error;
+                }
+                showError(errorMsg);
+            }
+        });
+    }
+
+    // 获取增强分析数据
+    function fetchEnhancedAnalysis(stockCode, marketType, period) {
+
+        $.ajax({
+            url: '/api/enhanced_analysis?_=' + new Date().getTime(),
+            type: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify({
+                stock_code: stockCode,
+                market_type: marketType,
+                period: period
+            }),
+            success: function(response) {
+
+                if (!response.result) {
+                    hideLoading();
+                    showError('增强分析响应格式不正确');
+                    return;
+                }
+
+                analysisResult = response.result;
+                renderAnalysisResult();
+                hideLoading();
+                $('#analysis-result').show();
+            },
+            error: function(xhr, status, error) {
+                hideLoading();
+
+                let errorMsg = '获取分析数据失败';
+                if (xhr.responseJSON && xhr.responseJSON.error) {
+                    errorMsg += ': ' + xhr.responseJSON.error;
+                } else if (error) {
+                    errorMsg += ': ' + error;
+                }
+                showError(errorMsg);
+            }
+        });
+    }
+
+    // 渲染分析结果
+    function renderAnalysisResult() {
+        if (!analysisResult) return;
+
+        $('#total-score').removeClass('score-good score-mid score-bad');
+
+        // 渲染股票基本信息
+        $('#stock-name').text(analysisResult.basic_info.stock_name + ' (' + analysisResult.basic_info.stock_code + ')');
+        $('#stock-info').text(analysisResult.basic_info.industry + ' | ' + analysisResult.basic_info.analysis_date);
+
+        // 渲染价格信息
+        $('#stock-price').text('¥' + formatNumber(analysisResult.price_data.current_price, 2));
+        const priceChangeClass = analysisResult.price_data.price_change >= 0 ? 'trend-up' : 'trend-down';
+        const priceChangeIcon = analysisResult.price_data.price_change >= 0 ? '<i class="fas fa-caret-up"></i>' : '<i class="fas fa-caret-down"></i>';
+        $('#price-change').html(`<span class="${priceChangeClass}">${priceChangeIcon} ${formatNumber(analysisResult.price_data.price_change_value, 2)} (${formatPercent(analysisResult.price_data.price_change, 2)})</span>`);
+
+        // 渲染评分和建议
+        const scoreClass = getScoreColorClass(analysisResult.scores.total_score);
+        $('#total-score').text(analysisResult.scores.total_score).addClass(scoreClass);
+        $('#recommendation').text(analysisResult.recommendation.action);
+
+        // 渲染技术指标
+        $('#rsi-value').text(formatNumber(analysisResult.technical_analysis.indicators.rsi, 2));
+
+        const maTrendClass = getTrendColorClass(analysisResult.technical_analysis.trend.ma_trend);
+        const maTrendIcon = getTrendIcon(analysisResult.technical_analysis.trend.ma_trend);
+        $('#ma-trend').html(`<span class="${maTrendClass}">${maTrendIcon} ${analysisResult.technical_analysis.trend.ma_status}</span>`);
+
+        const macdSignal = analysisResult.technical_analysis.indicators.macd > analysisResult.technical_analysis.indicators.macd_signal ? 'BUY' : 'SELL';
+        const macdClass = macdSignal === 'BUY' ? 'trend-up' : 'trend-down';
+        const macdIcon = macdSignal === 'BUY' ? '<i class="fas fa-arrow-up"></i>' : '<i class="fas fa-arrow-down"></i>';
+        $('#macd-signal').html(`<span class="${macdClass}">${macdIcon} ${macdSignal}</span>`);
+
+        $('#volatility').text(formatPercent(analysisResult.technical_analysis.indicators.volatility, 2));
+
+        // 渲染支撑压力位
+        let supportResistanceHtml = '';
+
+        // 渲染压力位
+        if (analysisResult.technical_analysis.support_resistance.resistance &&
+            analysisResult.technical_analysis.support_resistance.resistance.short_term &&
+            analysisResult.technical_analysis.support_resistance.resistance.short_term.length > 0) {
+            const resistance = analysisResult.technical_analysis.support_resistance.resistance.short_term[0];
+            const distance = ((resistance - analysisResult.price_data.current_price) / analysisResult.price_data.current_price * 100).toFixed(2);
+            supportResistanceHtml += `
+                <tr>
+                    <td><span class="badge bg-danger">短期压力</span></td>
+                    <td>${formatNumber(resistance, 2)}</td>
+                    <td>+${distance}%</td>
+                </tr>
+            `;
+        }
+
+        if (analysisResult.technical_analysis.support_resistance.resistance &&
+            analysisResult.technical_analysis.support_resistance.resistance.medium_term &&
+            analysisResult.technical_analysis.support_resistance.resistance.medium_term.length > 0) {
+            const resistance = analysisResult.technical_analysis.support_resistance.resistance.medium_term[0];
+            const distance = ((resistance - analysisResult.price_data.current_price) / analysisResult.price_data.current_price * 100).toFixed(2);
+            supportResistanceHtml += `
+                <tr>
+                    <td><span class="badge bg-warning text-dark">中期压力</span></td>
+                    <td>${formatNumber(resistance, 2)}</td>
+                    <td>+${distance}%</td>
+                </tr>
+            `;
+        }
+
+        // 渲染支撑位
+        if (analysisResult.technical_analysis.support_resistance.support &&
+            analysisResult.technical_analysis.support_resistance.support.short_term &&
+            analysisResult.technical_analysis.support_resistance.support.short_term.length > 0) {
+            const support = analysisResult.technical_analysis.support_resistance.support.short_term[0];
+            const distance = ((support - analysisResult.price_data.current_price) / analysisResult.price_data.current_price * 100).toFixed(2);
+            supportResistanceHtml += `
+                <tr>
+                    <td><span class="badge bg-success">短期支撑</span></td>
+                    <td>${formatNumber(support, 2)}</td>
+                    <td>${distance}%</td>
+                </tr>
+            `;
+        }
+
+        if (analysisResult.technical_analysis.support_resistance.support &&
+            analysisResult.technical_analysis.support_resistance.support.medium_term &&
+            analysisResult.technical_analysis.support_resistance.support.medium_term.length > 0) {
+            const support = analysisResult.technical_analysis.support_resistance.support.medium_term[0];
+            const distance = ((support - analysisResult.price_data.current_price) / analysisResult.price_data.current_price * 100).toFixed(2);
+            supportResistanceHtml += `
+                <tr>
+                    <td><span class="badge bg-info">中期支撑</span></td>
+                    <td>${formatNumber(support, 2)}</td>
+                    <td>${distance}%</td>
+                </tr>
+            `;
+        }
+
+        $('#support-resistance-table').html(supportResistanceHtml);
+
+        // 渲染AI分析
+        $('#ai-analysis').html(formatAIAnalysis(analysisResult.ai_analysis));
+
+        activeChartTab = 'price';
+        renderedTabs = { price: false, indicators: false, volume: false };
+        initChartTabs();
+        setActiveTab(activeChartTab);
+        renderScoreGauge();
+        renderRadarChart();
+        renderActiveTabChart();
+    }
+
+    function initChartTabs() {
+        if (chartTabsInitialized) return;
+        chartTabsInitialized = true;
+        $(document).on('click', '.chart-tab', function () {
+            const tab = $(this).data('tab');
+            if (!tab) return;
+            setActiveTab(tab);
+        });
+    }
+
+    function setActiveTab(tab) {
+        activeChartTab = tab;
+        $('.chart-tab').removeClass('active');
+        $(`.chart-tab[data-tab="${tab}"]`).addClass('active');
+        $('.chart-panel').removeClass('active');
+        $(`#chart-panel-${tab}`).addClass('active');
+
+        renderActiveTabChart();
+    }
+
+    function renderActiveTabChart() {
+        if (!analysisResult) return;
+        if (activeChartTab === 'price') {
+            if (!renderedTabs.price) {
+                renderPriceChart();
+                renderedTabs.price = true;
+            }
+            return;
+        }
+        if (activeChartTab === 'indicators') {
+            if (!renderedTabs.indicators) {
+                renderIndicatorsChart();
+                renderedTabs.indicators = true;
+            }
+            return;
+        }
+        if (activeChartTab === 'volume') {
+            if (!renderedTabs.volume) {
+                renderVolumeChart();
+                renderedTabs.volume = true;
+            }
+        }
+    }
+
+    // 绘制雷达图
+    function renderRadarChart() {
+        if (!analysisResult) return;
+
+        const options = {
+            series: [{
+                name: '评分',
+                data: [
+                    analysisResult.scores.trend_score || 0,
+                    analysisResult.scores.indicators_score || 0,
+                    analysisResult.scores.support_resistance_score || 0,
+                    analysisResult.scores.volatility_volume_score || 0
+                ]
+            }],
+            chart: {
+                height: 200,
+                type: 'radar',
+                toolbar: {
+                    show: false
+                }
+            },
+            grid: {
+                padding: {
+                    left: 0,
+                    right: 0,
+                    top: 0,
+                    bottom: 0
+                }
+            },
+            plotOptions: {
+                radar: {
+                    offsetX: -14
+                }
+            },
+            title: {
+                text: '多维度技术分析评分',
+                style: {
+                    fontSize: '14px'
+                }
+            },
+            xaxis: {
+                categories: ['趋势分析', '技术指标', '支撑压力位', '波动与成交量']
+            },
+            yaxis: {
+                max: 10,
+                min: 0
+            },
+            fill: {
+                opacity: 0.5,
+                colors: ['#4e73df']
+            },
+            markers: {
+                size: 4
+            }
+        };
+
+        // 清除旧图表
+        $('#radar-chart').empty();
+
+        const finalOptions = $.extend(true, {}, options, getApexChartThemeOptions());
+        const chart = new ApexCharts(document.querySelector("#radar-chart"), finalOptions);
+        charts.radar = chart;
+        chart.render();
+    }
+
+    function renderScoreGauge() {
+        if (!analysisResult) return;
+
+        const score = Number(analysisResult.scores.total_score || 0);
+        const percent = Math.max(0, Math.min(100, score * 10));
+        const options = {
+            series: [percent],
+            chart: {
+                height: 180,
+                type: 'radialBar',
+                toolbar: {
+                    show: false
+                }
+            },
+            plotOptions: {
+                radialBar: {
+                    startAngle: -120,
+                    endAngle: 120,
+                    hollow: {
+                        size: '62%'
+                    },
+                    track: {
+                        background: 'rgba(110, 168, 255, 0.12)'
+                    },
+                    dataLabels: {
+                        name: {
+                            show: true,
+                            fontSize: '12px'
+                        },
+                        value: {
+                            show: true,
+                            fontSize: '28px',
+                            fontWeight: 900,
+                            formatter: function () {
+                                return String(score);
+                            }
+                        }
+                    }
+                }
+            },
+            labels: ['综合评分']
+        };
+
+        $('#score-gauge').empty();
+        const finalOptions = $.extend(true, {}, options, getApexChartThemeOptions());
+        const chart = new ApexCharts(document.querySelector("#score-gauge"), finalOptions);
+        charts.gauge = chart;
+        chart.render();
+    }
+
+    function computeEMA(values, period) {
+        const k = 2 / (period + 1);
+        const ema = new Array(values.length).fill(null);
+        if (values.length < period) return ema;
+        let sum = 0;
+        for (let i = 0; i < period; i++) {
+            sum += values[i];
+        }
+        let prev = sum / period;
+        ema[period - 1] = prev;
+        for (let i = period; i < values.length; i++) {
+            prev = values[i] * k + prev * (1 - k);
+            ema[i] = prev;
+        }
+        return ema;
+    }
+
+    function computeRSISeries(closes, period) {
+        const p = period || 14;
+        const rsi = new Array(closes.length).fill(null);
+        if (closes.length <= p) return rsi;
+        let gains = 0;
+        let losses = 0;
+        for (let i = 1; i <= p; i++) {
+            const diff = closes[i] - closes[i - 1];
+            if (diff >= 0) gains += diff;
+            else losses -= diff;
+        }
+        let avgGain = gains / p;
+        let avgLoss = losses / p;
+        rsi[p] = avgLoss === 0 ? 100 : 100 - (100 / (1 + (avgGain / avgLoss)));
+        for (let i = p + 1; i < closes.length; i++) {
+            const diff = closes[i] - closes[i - 1];
+            const gain = diff > 0 ? diff : 0;
+            const loss = diff < 0 ? -diff : 0;
+            avgGain = (avgGain * (p - 1) + gain) / p;
+            avgLoss = (avgLoss * (p - 1) + loss) / p;
+            rsi[i] = avgLoss === 0 ? 100 : 100 - (100 / (1 + (avgGain / avgLoss)));
+        }
+        return rsi;
+    }
+
+    function computeMACDSeries(closes) {
+        const ema12 = computeEMA(closes, 12);
+        const ema26 = computeEMA(closes, 26);
+        const macd = closes.map((_, i) => {
+            if (ema12[i] == null || ema26[i] == null) return null;
+            return ema12[i] - ema26[i];
+        });
+        const macdForSignal = macd.map(v => (v == null ? 0 : v));
+        const signal = computeEMA(macdForSignal, 9).map((v, i) => (macd[i] == null ? null : v));
+        const hist = macd.map((v, i) => {
+            if (v == null || signal[i] == null) return null;
+            return v - signal[i];
+        });
+        return { macd, signal, hist };
+    }
+
+    function computeEMAProgressive(values, period) {
+        const k = 2 / (period + 1);
+        const ema = new Array(values.length).fill(null);
+        let prev = null;
+        for (let i = 0; i < values.length; i++) {
+            const v = values[i];
+            if (!Number.isFinite(v)) {
+                ema[i] = prev;
+                continue;
+            }
+            if (prev == null) {
+                prev = v;
+            } else {
+                prev = v * k + prev * (1 - k);
+            }
+            ema[i] = prev;
+        }
+        return ema;
+    }
+
+    function computeRSISeriesProgressive(closes, period) {
+        const p = period || 14;
+        const rsi = new Array(closes.length).fill(null);
+        if (closes.length === 0) return rsi;
+        rsi[0] = 50;
+
+        let sumG = 0;
+        let sumL = 0;
+        for (let i = 1; i < closes.length; i++) {
+            const prev = closes[i - 1];
+            const cur = closes[i];
+            if (!Number.isFinite(prev) || !Number.isFinite(cur)) {
+                rsi[i] = rsi[i - 1];
+                continue;
+            }
+
+            const diff = cur - prev;
+            const gain = diff > 0 ? diff : 0;
+            const loss = diff < 0 ? -diff : 0;
+            sumG += gain;
+            sumL += loss;
+
+            if (i > p) {
+                const dOld = closes[i - p] - closes[i - p - 1];
+                const gOld = dOld > 0 ? dOld : 0;
+                const lOld = dOld < 0 ? -dOld : 0;
+                sumG -= gOld;
+                sumL -= lOld;
+            }
+
+            const win = Math.min(i, p);
+            const avgG = sumG / win;
+            const avgL = sumL / win;
+            rsi[i] = avgL === 0 ? 100 : 100 - (100 / (1 + (avgG / avgL)));
+        }
+        return rsi;
+    }
+
+    function computeMACDSeriesProgressive(closes) {
+        const ema12 = computeEMAProgressive(closes, 12);
+        const ema26 = computeEMAProgressive(closes, 26);
+        const macd = closes.map((_, i) => {
+            if (ema12[i] == null || ema26[i] == null) return null;
+            return ema12[i] - ema26[i];
+        });
+        const signal = computeEMAProgressive(macd.map(v => (v == null ? 0 : v)), 9);
+        const hist = macd.map((v, i) => {
+            if (v == null || signal[i] == null) return null;
+            return v - signal[i];
+        });
+        return { macd, signal, hist };
+    }
+
+    function computeMovingAverageValues(data, period) {
+        const result = new Array(data.length).fill(null);
+        const window = [];
+        let sum = 0;
+
+        for (let i = 0; i < data.length; i++) {
+            const close = Number(data[i] && data[i].close);
+            if (!Number.isFinite(close)) {
+                result[i] = null;
+                continue;
+            }
+            window.push(close);
+            sum += close;
+            if (window.length > period) {
+                sum -= window.shift();
+            }
+            // 数据不足 period 时用已有窗口的平均值，使均线从开头连续显示
+            result[i] = sum / window.length;
+        }
+        return result;
+    }
+
+    function renderIndicatorsChart() {
+        if (!stockData || stockData.length === 0) return;
+        const closes = stockData.map(item => {
+            const v = Number(item.close);
+            return Number.isFinite(v) ? v : null;
+        });
+        if (!closes.some(v => Number.isFinite(v))) return;
+        const dates = stockData.map(item => new Date(item.date));
+
+        const rsi = computeRSISeriesProgressive(closes, 14);
+        const macd = computeMACDSeriesProgressive(closes);
+
+        const macdVals = [
+            ...macd.macd,
+            ...macd.signal,
+            ...macd.hist
+        ].filter(v => Number.isFinite(v));
+        let macdMin = -1;
+        let macdMax = 1;
+        if (macdVals.length > 0) {
+            macdMin = Math.min(...macdVals, 0);
+            macdMax = Math.max(...macdVals, 0);
+            const span = macdMax - macdMin;
+            const pad = span > 0 ? span * 0.18 : (Math.abs(macdMax || 0) * 0.25 + 0.001);
+            macdMin -= pad;
+            macdMax += pad;
+        }
+
+        const series = [
+            {
+                name: 'RSI(14)',
+                type: 'line',
+                yAxisIndex: 0,
+                data: dates.map((d, i) => ({ x: d, y: rsi[i] }))
+            },
+            {
+                name: 'MACD',
+                type: 'line',
+                yAxisIndex: 1,
+                data: dates.map((d, i) => ({ x: d, y: macd.macd[i] }))
+            },
+            {
+                name: 'Signal',
+                type: 'line',
+                yAxisIndex: 1,
+                data: dates.map((d, i) => ({ x: d, y: macd.signal[i] }))
+            },
+            {
+                name: 'Histogram',
+                type: 'column',
+                yAxisIndex: 1,
+                data: dates.map((d, i) => ({ x: d, y: macd.hist[i] }))
+            }
+        ];
+
+        const options = {
+            series,
+            chart: {
+                height: 420,
+                type: 'line',
+                stacked: false,
+                toolbar: {
+                    show: true
+                }
+            },
+            legend: {
+                position: 'bottom',
+                horizontalAlign: 'center',
+                fontSize: '12px',
+                itemMargin: {
+                    horizontal: 10,
+                    vertical: 0
+                }
+            },
+            stroke: {
+                width: [2, 2, 2, 0],
+                curve: 'smooth'
+            },
+            markers: {
+                size: 0
+            },
+            dataLabels: {
+                enabled: false
+            },
+            title: {
+                text: '技术指标（RSI / MACD）',
+                align: 'left',
+                style: {
+                    fontSize: '14px'
+                }
+            },
+            xaxis: {
+                type: 'datetime',
+                labels: {
+                    datetimeUTC: false,
+                    formatter: formatDateLabel
+                },
+                datetimeFormatter: {
+                    year: 'yyyy-MM-dd',
+                    month: 'yyyy-MM-dd',
+                    day: 'yyyy-MM-dd'
+                }
+            },
+            yaxis: [
+                {
+                    min: 0,
+                    max: 100,
+                    tickAmount: 5,
+                    labels: {
+                        formatter: function (value) {
+                            return formatNumber(value, 0);
+                        }
+                    },
+                    title: {
+                        text: 'RSI'
+                    }
+                },
+                {
+                    opposite: true,
+                    min: macdMin,
+                    max: macdMax,
+                    tickAmount: 6,
+                    labels: {
+                        formatter: function (value) {
+                            return formatNumber(value, 4);
+                        }
+                    },
+                    title: {
+                        text: 'MACD'
+                    }
+                }
+            ],
+            tooltip: {
+                shared: true,
+                intersect: false,
+                x: {
+                    format: 'yyyy-MM-dd'
+                },
+                y: {
+                    formatter: function (value, { seriesIndex }) {
+                        if (value == null || !Number.isFinite(value)) return '-';
+                        // RSI 显示整数，MACD/Signal/Histogram 保留小数，避免被四舍五入成 0
+                        if (seriesIndex === 0) return formatNumber(value, 0);
+                        return formatNumber(value, 4);
+                    }
+                }
+            },
+            plotOptions: {
+                bar: {
+                    columnWidth: '60%'
+                }
+            }
+        };
+
+        $('#indicators-chart').empty();
+        const finalOptions = $.extend(true, {}, options, getApexChartThemeOptions());
+        const chart = new ApexCharts(document.querySelector("#indicators-chart"), finalOptions);
+        charts.indicators = chart;
+        chart.render();
+    }
+
+    function renderVolumeChart() {
+        if (!stockData || stockData.length === 0) return;
+        const volumeSeries = stockData.map(item => {
+            const v = item.volume == null ? null : Number(item.volume);
+            return {
+                x: new Date(item.date),
+                y: Number.isFinite(v) ? v : null
+            };
+        });
+
+        const maPeriod = 20;
+        const volWindow = [];
+        let volSum = 0;
+        const avgSeries = volumeSeries.map(p => {
+            const v = p.y;
+            if (!Number.isFinite(v)) {
+                return { x: p.x, y: null };
+            }
+            volWindow.push(v);
+            volSum += v;
+            if (volWindow.length > maPeriod) {
+                volSum -= volWindow.shift();
+            }
+            return { x: p.x, y: volSum / volWindow.length };
+        });
+
+        const options = {
+            series: [
+                {
+                    name: '成交量',
+                    type: 'column',
+                    data: volumeSeries
+                },
+                {
+                    name: `均量线(MA${maPeriod})`,
+                    type: 'line',
+                    data: avgSeries
+                }
+            ],
+            chart: {
+                height: 420,
+                type: 'line',
+                toolbar: {
+                    show: true
+                }
+            },
+            legend: {
+                position: 'bottom',
+                horizontalAlign: 'center',
+                fontSize: '12px',
+                itemMargin: {
+                    horizontal: 10,
+                    vertical: 0
+                }
+            },
+            stroke: {
+                width: [0, 2],
+                curve: 'smooth'
+            },
+            markers: {
+                size: 0
+            },
+            plotOptions: {
+                bar: {
+                    columnWidth: '70%'
+                }
+            },
+            dataLabels: {
+                enabled: false
+            },
+            title: {
+                text: '成交量',
+                align: 'left',
+                style: {
+                    fontSize: '14px'
+                }
+            },
+            xaxis: {
+                type: 'datetime'
+                ,
+                labels: {
+                    datetimeUTC: false,
+                    formatter: formatDateLabel
+                },
+                datetimeFormatter: {
+                    year: 'yyyy-MM-dd',
+                    month: 'yyyy-MM-dd',
+                    day: 'yyyy-MM-dd'
+                }
+            },
+            yaxis: {
+                labels: {
+                    formatter: function (value) {
+                        return formatNumber(value, 0);
+                    }
+                }
+            },
+            tooltip: {
+                shared: true,
+                intersect: false,
+                x: {
+                    format: 'yyyy-MM-dd'
+                },
+                y: {
+                    formatter: function (value, { seriesIndex }) {
+                        if (value == null || !Number.isFinite(value)) return '-';
+                        if (seriesIndex === 0) return formatNumber(value, 0);
+                        return formatNumber(value, 0);
+                    }
+                }
+            }
+        };
+
+        $('#volume-chart').empty();
+        const finalOptions = $.extend(true, {}, options, getApexChartThemeOptions());
+        const chart = new ApexCharts(document.querySelector("#volume-chart"), finalOptions);
+        charts.volume = chart;
+        chart.render();
+    }
+
+    // 绘制价格图表
+    function renderPriceChart() {
+        if (!stockData || stockData.length === 0) return;
+
+        // 准备价格数据
+        const seriesData = [];
+
+        const dates = stockData.map(item => new Date(item.date));
+        const ma5Computed = computeMovingAverageValues(stockData, 5);
+        const ma20Computed = computeMovingAverageValues(stockData, 20);
+        const ma60Computed = computeMovingAverageValues(stockData, 60);
+
+        // 添加收盘价折线（更平滑美观）
+        const closeData = stockData.map(item => ({
+            x: new Date(item.date),
+            y: item.close
+        }));
+        seriesData.push({
+            name: '收盘价',
+            type: 'line',
+            data: closeData
+        });
+
+        // 添加均线数据
+        const ma5Data = dates.map((d, i) => {
+            const v = Number(stockData[i] && stockData[i].MA5);
+            return { x: d, y: Number.isFinite(v) && v > 0 ? v : ma5Computed[i] };
+        });
+        seriesData.push({
+            name: 'MA5',
+            type: 'line',
+            data: ma5Data
+        });
+
+        const ma20Data = dates.map((d, i) => {
+            const v = Number(stockData[i] && stockData[i].MA20);
+            return { x: d, y: Number.isFinite(v) && v > 0 ? v : ma20Computed[i] };
+        });
+        seriesData.push({
+            name: 'MA20',
+            type: 'line',
+            data: ma20Data
+        });
+
+        const ma60Data = dates.map((d, i) => {
+            const v = Number(stockData[i] && stockData[i].MA60);
+            return { x: d, y: Number.isFinite(v) && v > 0 ? v : ma60Computed[i] };
+        });
+        seriesData.push({
+            name: 'MA60',
+            type: 'line',
+            data: ma60Data
+        });
+
+        // 创建图表
+        const options = {
+            series: seriesData,
+            chart: {
+                height: 420,
+                type: 'line',
+                toolbar: {
+                    show: true,
+                    tools: {
+                        download: true,
+                        selection: true,
+                        zoom: true,
+                        zoomin: true,
+                        zoomout: true,
+                        pan: true,
+                        reset: true
+                    }
+                }
+            },
+            stroke: {
+                width: [2, 1.5, 1.5, 1.5],
+                curve: 'smooth'
+            },
+            markers: {
+                size: 0
+            },
+            title: {
+                text: `${analysisResult.basic_info.stock_name} (${analysisResult.basic_info.stock_code}) 价格走势`,
+                align: 'left',
+                style: {
+                    fontSize: '14px'
+                }
+            },
+            xaxis: {
+                type: 'datetime'
+                ,
+                labels: {
+                    datetimeUTC: false,
+                    formatter: formatDateLabel
+                },
+                datetimeFormatter: {
+                    year: 'yyyy-MM-dd',
+                    month: 'yyyy-MM-dd',
+                    day: 'yyyy-MM-dd'
+                }
+            },
+            yaxis: {
+                tooltip: {
+                    enabled: true
+                },
+                labels: {
+                    formatter: function(value) {
+                        return formatNumber(value, 2);  // 统一使用2位小数
+                    }
+                }
+            },
+            tooltip: {
+                shared: true,
+                intersect: false,
+                x: {
+                    format: 'yyyy-MM-dd'
+                }
+            }
+        };
+
+        // 清除旧图表
+        $('#price-trend-chart').empty();
+
+        const finalOptions = $.extend(true, {}, options, getApexChartThemeOptions());
+        const chart = new ApexCharts(document.querySelector("#price-trend-chart"), finalOptions);
+        charts.priceTrend = chart;
+        chart.render();
+    }
+
+    function getQueryParam(name) {
+        const params = new URLSearchParams(window.location.search);
+        return params.get(name);
+    }
+
+    $(function () {
+        const code = getQueryParam('stock_code') || getQueryParam('stockCode') || getQueryParam('code');
+        const market = getQueryParam('market_type') || getQueryParam('marketType');
+        const period = getQueryParam('period');
+        if (code) {
+            $('#stock-code').val(code);
+        }
+        if (market) {
+            $('#market-type').val(market);
+        }
+        if (period) {
+            $('#analysis-period').val(period);
+        }
+        if (code) {
+            fetchStockData((code || '').trim(), $('#market-type').val(), $('#analysis-period').val());
+        }
+    });
+    </script>
+
+
+
+</body>
+</html>
