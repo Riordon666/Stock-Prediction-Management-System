@@ -1,18 +1,19 @@
-# Stock Prediction Management System（股票预测管理系统）
+# Stock Prediction Management System
+（股票预测管理系统）
+
+![Python](https://img.shields.io/badge/Python-3.10.11-blue?logo=python&logoColor=white)
+![Flask](https://img.shields.io/badge/Flask-Web%20Framework-black?logo=flask&logoColor=white)
+![License](https://img.shields.io/badge/License-MIT-green)
 
 基于 **Flask** 的股票分析/预测管理系统，提供股票历史行情获取、技术指标可视化、综合评分与分析报告展示等功能。
 
 ## 功能特性
 
-- **股票分析页（/analysis）**
-  - 价格趋势（收盘价折线 + MA5/MA20/MA60）
-  - 技术指标（RSI / MACD：含 Signal、Histogram）
-  - 成交量（柱状图 + 均量线 MA20）
-  - 支撑/压力位展示、雷达图多维度评分、AI 分析报告展示
-- **股票预测页（/predict）**
-  - 预留页面（后续可扩展预测参数、预测结果与趋势图）
-- **首页（/）**
-  - 实时快讯区域（预留位置）
+| 模块 | 路由/入口 | 功能说明 | 状态 |
+| --- | --- | --- | --- |
+| 股票分析 | `/analysis` | 价格趋势（收盘价折线 + MA5/MA20/MA60）<br>技术指标（RSI / MACD：含 Signal、Histogram）<br>成交量（柱状图 + 均量线 MA20）<br>支撑/压力位展示<br>雷达图多维度评分<br>AI 分析报告展示 | 已实现 |
+| 股票预测 | `/predict` | 正在开发中 | 开发中 |
+| 首页 | `/` | 正在开发中 | 开发中 |
 
 ## 技术栈
 
@@ -46,7 +47,6 @@ Stock Prediction Management System/
 
 ## 安装与运行
 
-> 说明：项目根目录没有内置 `requirements.txt`，请按需安装依赖。建议使用虚拟环境。
 
 ### 1. 创建并激活虚拟环境（可选但推荐）
 
@@ -117,4 +117,4 @@ LOG_FILE=data/logs/server.log
 
 ## 许可证
 
-未声明（如需开源许可，可补充 MIT/Apache-2.0 等）。
+MIT License
