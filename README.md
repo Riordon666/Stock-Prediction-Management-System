@@ -1,19 +1,21 @@
-# Stock Prediction Management System
-（股票预测管理系统）
-
 ![Python](https://img.shields.io/badge/Python-3.10.11-blue?logo=python&logoColor=white)
 ![Flask](https://img.shields.io/badge/Flask-Web%20Framework-black?logo=flask&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-green)
+
+
+# Stock Prediction Management System
+（股票预测管理系统）
+
 
 基于 **Flask** 的股票分析/预测管理系统，提供股票历史行情获取、技术指标可视化、综合评分与分析报告展示等功能。
 
 ## 功能特性
 
-| 模块 | 路由/入口 | 功能说明 | 状态 |
-| --- | --- | --- | --- |
-| 股票分析 | `/analysis` | 价格趋势（收盘价折线 + MA5/MA20/MA60）<br>技术指标（RSI / MACD：含 Signal、Histogram）<br>成交量（柱状图 + 均量线 MA20）<br>支撑/压力位展示<br>雷达图多维度评分<br>AI 分析报告展示 | 已实现 |
-| 股票预测 | `/predict` | 正在开发中 | 开发中 |
-| 首页 | `/` | 正在开发中 | 开发中 |
+| 模块       | 路由/入口 | 功能说明 | 状态 |
+|----------| --- | --- | --- |
+| 股票分析     | `/analysis` | 价格趋势（收盘价折线 + MA5/MA20/MA60）<br>技术指标（RSI / MACD：含 Signal、Histogram）<br>成交量（柱状图 + 均量线 MA20）<br>支撑/压力位展示<br>雷达图多维度评分<br>AI 分析报告展示 | 已实现 |
+| 股票预测     | `/predict` | 正在开发中 | 开发中 |
+| 首页(实时快讯) | `/` | 正在开发中 | 开发中 |
 
 ## 技术栈
 
@@ -100,7 +102,7 @@ LOG_FILE=data/logs/server.log
 - **akshare**：默认优先使用。
 - **baostock**：可选备用。
 
-当未安装 `baostock` 时，日志会提示 `BaostockAdapter不可用`，这是正常的（只要 akshare 可用即可完成数据获取）。
+当未安装 `baostock` 时，日志会提示 `BaostockAdapter`不可用，这是正常的（只要 akshare 可用即可完成数据获取）。
 
 ## 常见问题
 
