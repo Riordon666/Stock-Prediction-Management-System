@@ -56,17 +56,17 @@ class DataProvider:
         logger.info(f"DataProvider初始化完成，数据源: {[a.name for a in adapters]}")
 
     def get_stock_history(self, code: str, start_date: str, end_date: str,
-                          adjust: str = "qfq") -> pd.DataFrame:
+                          adjust: str = "qfq", market_type: str = "A") -> pd.DataFrame:
         """获取股票历史K线"""
-        return self.fallback.execute('get_stock_history', code, start_date, end_date, adjust)
+        return self.fallback.execute('get_stock_history', code, start_date, end_date, adjust, market_type, allow_empty_result=True)
 
     def get_index_stocks(self, index_code: str) -> List[str]:
         """获取指数成分股"""
         return self.fallback.execute('get_index_stocks', index_code)
 
-    def get_stock_info(self, code: str) -> Dict:
+    def get_stock_info(self, code: str, market_type: str = "A") -> Dict:
         """获取股票基本信息"""
-        return self.fallback.execute('get_stock_info', code)
+        return self.fallback.execute('get_stock_info', code, market_type)
 
     def get_financial_data(self, code: str) -> Dict:
         """获取财务数据"""

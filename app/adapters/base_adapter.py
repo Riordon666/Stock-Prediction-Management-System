@@ -12,7 +12,7 @@ class BaseAdapter(ABC):
 
     @abstractmethod
     def get_stock_history(self, code: str, start_date: str, end_date: str,
-                          adjust: str = "qfq") -> pd.DataFrame:
+                          adjust: str = "qfq", market_type: str = "A") -> pd.DataFrame:
         """获取股票历史K线
 
         Args:
@@ -39,7 +39,7 @@ class BaseAdapter(ABC):
         pass
 
     @abstractmethod
-    def get_stock_info(self, code: str) -> Dict:
+    def get_stock_info(self, code: str, market_type: str = "A") -> Dict:
         """获取股票基本信息"""
         pass
 

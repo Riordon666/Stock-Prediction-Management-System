@@ -28,7 +28,7 @@ class FallbackManager:
         # 失败计数
         self._fail_count = {a.name: 0 for a in adapters}
 
-    def execute(self, method_name: str, *args, **kwargs) -> Any:
+    def execute(self, method_name: str, *args, allow_empty_result: bool = False, **kwargs) -> Any:
         """执行方法，自动故障转移
 
         Args:
@@ -43,9 +43,12 @@ class FallbackManager:
         """
         last_error = None
         tried_adapters = []
+        got_empty_without_exception = False
 
         for adapter in self.adapters:
             adapter_name = adapter.name
+            adapter_had_exception = False
+            adapter_returned_empty = False
 
             # 跳过已标记为不可用的适配器（但失败次数超过阈值才跳过）
             if self._fail_count.get(adapter_name, 0) >= 5:
@@ -69,18 +72,28 @@ class FallbackManager:
                         self._adapter_status[adapter_name] = True
                         return result
 
+                    if allow_empty_result and result is not None:
+                        got_empty_without_exception = True
+                        adapter_returned_empty = True
+                        break
+
                 except Exception as e:
                     last_error = e
+                    adapter_had_exception = True
                     logger.warning(f"[{adapter_name}] {method_name} 失败(重试{retry+1}/{self.max_retries}): {e}")
 
                     if retry < self.max_retries - 1:
                         time.sleep(self.retry_delay)
 
             # 该适配器所有重试都失败了
+            if allow_empty_result and adapter_returned_empty and not adapter_had_exception:
+                continue
             self._fail_count[adapter_name] = self._fail_count.get(adapter_name, 0) + 1
             logger.warning(f"[{adapter_name}] 失败次数: {self._fail_count[adapter_name]}")
 
         # 所有适配器都失败了
+        if allow_empty_result and got_empty_without_exception:
+            return pd.DataFrame()
         error_msg = f"所有数据源均不可用 (尝试了: {tried_adapters})"
         if last_error:
             error_msg += f", 最后错误: {last_error}"

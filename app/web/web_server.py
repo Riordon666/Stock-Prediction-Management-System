@@ -5,6 +5,8 @@
 """
 import os
 import logging
+import threading
+import time
 from datetime import datetime, timedelta
 from typing import Any, Dict
 
@@ -41,6 +43,56 @@ logger = logging.getLogger(__name__)
 logger.info(f"基础Web服务器已启动，日志级别: {log_level}")
 
 
+class _WerkzeugProgressFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            msg = record.getMessage()
+            if '/api/progress' in msg:
+                return False
+        except Exception:
+            return True
+        return True
+
+
+logging.getLogger('werkzeug').addFilter(_WerkzeugProgressFilter())
+
+_progress_lock = threading.Lock()
+_progress_store: Dict[str, Dict[str, Any]] = {}
+
+
+def _progress_set(request_id: str, percent: int, stage: str) -> None:
+    rid = (request_id or '').strip()
+    if not rid:
+        return
+    p = int(max(0, min(100, percent)))
+    s = (stage or '').strip()
+    with _progress_lock:
+        _progress_store[rid] = {
+            'percent': p,
+            'stage': s,
+            'updated_at': time.time(),
+        }
+
+
+def _progress_get(request_id: str) -> Dict[str, Any]:
+    rid = (request_id or '').strip()
+    if not rid:
+        return {}
+    with _progress_lock:
+        return dict(_progress_store.get(rid) or {})
+
+
+def _progress_cleanup(max_age_seconds: int = 30 * 60) -> None:
+    now = time.time()
+    with _progress_lock:
+        keys = list(_progress_store.keys())
+        for k in keys:
+            v = _progress_store.get(k) or {}
+            ts = float(v.get('updated_at') or 0.0)
+            if now - ts > max_age_seconds:
+                _progress_store.pop(k, None)
+
+
 # 基础路由 - 页面路由
 @app.route('/')
 def index():
@@ -75,8 +127,9 @@ def _fmt_yyyymmdd(d: datetime) -> str:
 
 
 def _get_history_df(stock_code: str, market_type: str, period: str) -> pd.DataFrame:
-    if market_type not in {'A'}:
-        raise ValueError('当前仅支持A股市场分析')
+    market_type = (market_type or 'A').strip().upper()
+    if market_type not in {'A', 'HK', 'US'}:
+        raise ValueError('不支持的市场类型')
 
     end_dt = datetime.now()
     start_dt = end_dt - timedelta(days=_period_to_days(period))
@@ -87,6 +140,7 @@ def _get_history_df(stock_code: str, market_type: str, period: str) -> pd.DataFr
         start_date=_fmt_yyyymmdd(start_dt),
         end_date=_fmt_yyyymmdd(end_dt),
         adjust='qfq',
+        market_type=market_type,
     )
 
     if df is None or df.empty:
@@ -143,8 +197,9 @@ def _score_and_reco(trend_score: float, indicators_score: float, sr_score: float
     total = (trend_score + indicators_score + sr_score + vv_score) / 4.0
     total = max(0.0, min(10.0, total))
     total_round = int(round(total))
+
     if total_round >= 8:
-        action = '强烈买入'
+        action = '强烈建议买入'
     elif total_round >= 6:
         action = '建议买入'
     elif total_round >= 4:
@@ -157,23 +212,41 @@ def _score_and_reco(trend_score: float, indicators_score: float, sr_score: float
     }
 
 
+def _pick_first_non_empty(info: Dict[str, Any], keys) -> str:
+    for k in keys:
+        v = info.get(k)
+        if v is None:
+            continue
+        s = str(v).strip()
+        if s and s.lower() != 'none' and s.lower() != 'nan':
+            return s
+    return ''
+
+
 @app.route('/api/stock_data')
 def api_stock_data():
     stock_code = (request.args.get('stock_code') or '').strip()
     market_type = (request.args.get('market_type') or 'A').strip()
     period = (request.args.get('period') or '1y').strip()
+    request_id = (request.args.get('request_id') or '').strip()
 
     if not stock_code:
         return jsonify({'error': 'stock_code不能为空'}), 400
 
     try:
+        _progress_set(request_id, 5, 'stock_data_start')
         df = _get_history_df(stock_code, market_type, period)
         if df.empty:
+            _progress_set(request_id, 100, 'done_no_data')
             return jsonify({'data': []})
+
+        _progress_set(request_id, 40, 'stock_data_history_ok')
 
         df['MA5'] = df['close'].rolling(5).mean()
         df['MA20'] = df['close'].rolling(20).mean()
         df['MA60'] = df['close'].rolling(60).mean()
+
+        _progress_set(request_id, 55, 'stock_data_indicators_ok')
 
         out = []
         for _, r in df.iterrows():
@@ -189,8 +262,10 @@ def api_stock_data():
                 'MA20': float(r['MA20']) if pd.notna(r['MA20']) else None,
                 'MA60': float(r['MA60']) if pd.notna(r['MA60']) else None,
             })
+        _progress_set(request_id, 60, 'stock_data_done')
         return jsonify({'data': out})
     except Exception as e:
+        _progress_set(request_id, 100, 'error')
         logger.exception('api_stock_data failed')
         return jsonify({'error': str(e)}), 500
 
@@ -201,14 +276,19 @@ def api_enhanced_analysis():
     stock_code = (payload.get('stock_code') or '').strip()
     market_type = (payload.get('market_type') or 'A').strip()
     period = (payload.get('period') or '1y').strip()
+    request_id = (payload.get('request_id') or '').strip()
 
     if not stock_code:
         return jsonify({'error': 'stock_code不能为空'}), 400
 
     try:
+        _progress_set(request_id, 65, 'analysis_start')
         df = _get_history_df(stock_code, market_type, period)
         if df.empty:
+            _progress_set(request_id, 100, 'done_no_data')
             return jsonify({'error': '未找到股票数据'}), 404
+
+        _progress_set(request_id, 72, 'analysis_history_ok')
 
         close = df['close']
         current_price = float(close.iloc[-1])
@@ -223,6 +303,8 @@ def api_enhanced_analysis():
         ma5 = float(close.rolling(5).mean().iloc[-1]) if len(close) >= 5 else current_price
         ma20 = float(close.rolling(20).mean().iloc[-1]) if len(close) >= 20 else current_price
         ma60 = float(close.rolling(60).mean().iloc[-1]) if len(close) >= 60 else current_price
+
+        _progress_set(request_id, 82, 'analysis_indicators_ok')
 
         # Trend
         if ma5 > ma20 > ma60:
@@ -291,16 +373,53 @@ def api_enhanced_analysis():
 
         reco = _score_and_reco(trend_score, indicators_score, sr_score, vv_score)
 
+        _progress_set(request_id, 88, 'analysis_scoring_ok')
+
         # Basic info
         stock_name = stock_code
         industry = '未知行业'
         try:
             provider = get_data_provider()
-            info = provider.get_stock_info(stock_code) or {}
-            stock_name = info.get('股票简称') or info.get('code_name') or info.get('名称') or stock_name
+            info = provider.get_stock_info(stock_code, market_type=market_type) or {}
+
+            mt = (market_type or 'A').strip().upper()
+            if mt == 'HK':
+                stock_name = _pick_first_non_empty(info, [
+                    'comcnname',
+                    '股票简称',
+                    '名称',
+                    'comenname',
+                    'org_short_name_cn',
+                    'org_name_cn',
+                    'org_short_name_en',
+                    'org_name_en',
+                    'code_name',
+                ]) or stock_name
+            elif mt == 'US':
+                stock_name = _pick_first_non_empty(info, [
+                    'org_short_name_cn',
+                    'org_name_cn',
+                    'org_short_name_en',
+                    'org_name_en',
+                    'comcnname',
+                    '股票简称',
+                    '名称',
+                    'code_name',
+                ]) or stock_name
+            else:
+                stock_name = _pick_first_non_empty(info, [
+                    '股票简称',
+                    '证券简称',
+                    '股票名称',
+                    '名称',
+                    'code_name',
+                    'name',
+                ]) or stock_name
             industry = info.get('行业') or info.get('industry') or industry
         except Exception:
             pass
+
+        _progress_set(request_id, 94, 'analysis_stock_info_ok')
 
         analysis_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
@@ -351,10 +470,24 @@ def api_enhanced_analysis():
             },
             'ai_analysis': ai_analysis,
         }
+        _progress_set(request_id, 100, 'done')
+        _progress_cleanup()
         return jsonify({'result': result})
     except Exception as e:
+        _progress_set(request_id, 100, 'error')
         logger.exception('api_enhanced_analysis failed')
         return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/progress')
+def api_progress():
+    request_id = (request.args.get('request_id') or '').strip()
+    if not request_id:
+        return jsonify({'error': 'request_id不能为空'}), 400
+    data = _progress_get(request_id)
+    if not data:
+        return jsonify({'percent': 0, 'stage': 'unknown'}), 200
+    return jsonify({'percent': int(data.get('percent') or 0), 'stage': data.get('stage') or ''}), 200
 
 
 if __name__ == '__main__':

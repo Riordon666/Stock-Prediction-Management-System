@@ -41,8 +41,11 @@ class BaostockAdapter(BaseAdapter):
         return date_str
 
     def get_stock_history(self, code: str, start_date: str, end_date: str,
-                          adjust: str = "qfq") -> pd.DataFrame:
+                          adjust: str = "qfq", market_type: str = "A") -> pd.DataFrame:
         """获取股票历史K线"""
+        mt = (market_type or 'A').strip().upper()
+        if mt != 'A':
+            return pd.DataFrame()
         self._ensure_login()
         bs_code = self._convert_code(code)
         start_date = self._format_date(start_date)
@@ -98,8 +101,11 @@ class BaostockAdapter(BaseAdapter):
                 stocks.append(code)
         return stocks
 
-    def get_stock_info(self, code: str) -> Dict:
+    def get_stock_info(self, code: str, market_type: str = "A") -> Dict:
         """获取股票基本信息"""
+        mt = (market_type or 'A').strip().upper()
+        if mt != 'A':
+            return {}
         self._ensure_login()
         bs_code = self._convert_code(code)
 
