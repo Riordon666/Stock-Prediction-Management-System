@@ -13,9 +13,10 @@
 
 | 模块       | 路由/入口 | 功能说明 | 状态 |
 |----------| --- | --- | --- |
+| 首页(实时快讯) | `/` | 正在开发中 | 开发中 |
 | 股票分析     | `/analysis` | 价格趋势（收盘价折线 + MA5/MA20/MA60）<br>技术指标（RSI / MACD：含 Signal、Histogram）<br>成交量（柱状图 + 均量线 MA20）<br>支撑/压力位展示<br>雷达图多维度评分<br>AI 分析报告展示 | 已实现 |
 | 股票预测     | `/predict` | 正在开发中 | 开发中 |
-| 首页(实时快讯) | `/` | 正在开发中 | 开发中 |
+
 
 ## 技术栈
 
@@ -34,8 +35,9 @@ Stock Prediction Management System/
 │  ├─ web/
 │  │  ├─ web_server.py          # Flask Web 服务与 API
 │  │  ├─ templates/             # HTML 模板（index/analysis/predict）
-│  │  └─ static/                # 静态资源（css 等）
+│  │  └─ static/                # 静态资源（css、js、图片等）
 │  ├─ core/
+│  │  ├─ database.py            # 数据库管理
 │  │  ├─ data_provider.py       # 统一数据提供层（多数据源故障转移）
 │  │  └─ fallback_manager.py    # 故障转移管理器
 │  └─ adapters/
@@ -120,3 +122,6 @@ LOG_FILE=data/logs/server.log
 ## 许可证
 
 MIT License
+
+## 免责声明
+本系统仅为个人毕业设计，仅用于学术研究用途，不构成任何投资建议。股票数据来源于公开市场，预测结果仅供参考。
