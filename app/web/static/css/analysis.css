@@ -390,7 +390,7 @@ body.light .badge {
 }
 
 .trend-up {
-    color: rgba(52, 211, 153, 0.95);
+    color: rgba(31, 214, 102, 0.829);
     font-weight: 800;
 }
 
@@ -440,7 +440,7 @@ body.light .badge {
 }
 
 .term {
-    color: rgba(103, 232, 249, 0.95);
+    color: rgba(7, 86, 150, 0.644);
     font-weight: 900;
 }
 
@@ -653,16 +653,6 @@ body.light .metric-item {
 
 .chart-panel.active {
     display: block;
-}
-
-body {
-    background: var(--bg) !important;
-    background-attachment: fixed;
-}
-
-body.light {
-    background: var(--bg) !important;
-    background-attachment: fixed;
 }
 
 #analysis-result {

@@ -19,7 +19,7 @@
 
 /* 基础 Reset（统一盒模型/高度/字体缩放） */
 * { box-sizing: border-box; }
-html, body { height: 100%; }
+html, body { min-height: 100%; }
 html { -webkit-text-size-adjust: 100%; }
 
 html {
@@ -27,7 +27,17 @@ html {
 }
 
 html.light {
-    background: #f7f9ff;
+    background:
+        linear-gradient(
+            to bottom,
+            #fff 0%,
+            #fff 40%,
+            rgba(255, 255, 255, 0) 100%
+        ),
+        linear-gradient(to right, #0ed2da, #5f29c7);
+    background-attachment: fixed;
+    background-repeat: no-repeat;
+    background-size: 100% 100%, 100% 100%;
 }
 
 /* 页面基础样式（背景/字体/默认文本颜色） */
@@ -43,6 +53,10 @@ body {
     line-height: 1.45;
 }
 
+body:not(.light) {
+    background: #000;
+}
+
 body.light {
     --bg: #f7f9ff;
     --panel: rgba(2, 6, 23, 0.04);
@@ -52,11 +66,186 @@ body.light {
     --muted: rgba(2, 6, 23, 0.66);
     --muted-2: rgba(2, 6, 23, 0.52);
     --shadow: 0 18px 40px rgba(2, 6, 23, 0.10);
+    background: transparent;
+}
+
+body.light::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    background-image: linear-gradient(90deg, #ccc 1px, transparent 1px);
+    background-size: 50px 100%;
+    pointer-events: none;
+    mask-image: linear-gradient(
+        to bottom,
+        rgba(0, 0, 0, 1) 0%,
+        rgba(0, 0, 0, 0) 70%
+    );
+    -webkit-mask-image: linear-gradient(
+        to bottom,
+        rgba(0, 0, 0, 1) 0%,
+        rgba(0, 0, 0, 0) 70%
+    );
+    opacity: 0.55;
+}
+
+.theme-transition-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    will-change: clip-path;
+    clip-path: circle(0px at 0px 0px);
+}
+
+.theme-transition-overlay.is-dark {
+    background: #000;
+}
+
+.theme-transition-overlay.is-light {
     background:
-        radial-gradient(900px 500px at 20% 10%, rgba(37, 99, 235, 0.14), transparent 60%),
-        radial-gradient(700px 500px at 80% 20%, rgba(14, 165, 233, 0.10), transparent 55%),
-        radial-gradient(900px 700px at 55% 90%, rgba(16, 185, 129, 0.07), transparent 60%),
-        var(--bg);
+        linear-gradient(
+            to bottom,
+            #fff 0%,
+            #fff 40%,
+            rgba(255, 255, 255, 0) 100%
+        ),
+        linear-gradient(to right, #0ed2da, #5f29c7);
+}
+
+.theme-transition-overlay-grid {
+    position: absolute;
+    inset: 0;
+    background-image: linear-gradient(90deg, #ccc 1px, transparent 1px);
+    background-size: 50px 100%;
+    mask-image: linear-gradient(
+        to bottom,
+        rgba(0, 0, 0, 1) 0%,
+        rgba(0, 0, 0, 0) 70%
+    );
+    -webkit-mask-image: linear-gradient(
+        to bottom,
+        rgba(0, 0, 0, 1) 0%,
+        rgba(0, 0, 0, 0) 70%
+    );
+    opacity: 0.55;
+}
+
+body.light .container {
+    position: relative;
+    z-index: 1;
+}
+
+.matrix-container {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    background: #000;
+    display: flex;
+    z-index: 0;
+    overflow: hidden;
+    pointer-events: none;
+}
+
+body.light .matrix-container {
+    display: none;
+}
+
+.matrix-pattern {
+    position: relative;
+    width: 1000px;
+    height: 100%;
+    flex-shrink: 0;
+}
+
+.matrix-column {
+    position: absolute;
+    top: -100%;
+    width: 20px;
+    height: 100%;
+    font-size: 16px;
+    line-height: 18px;
+    font-weight: bold;
+    animation: fall linear infinite;
+    white-space: nowrap;
+}
+
+.matrix-column::before {
+    content: "OPEN HIGH LOW CLOSE VOL MA5 MA10 MA20 RSI MACD KDJ EMA SMA BOLL 600519 000001 300750 NASDAQ NYSE HKEX SH SZ +1.23% -0.87% 09:30 15:00";
+    position: absolute;
+    top: 0;
+    left: 0;
+    background: linear-gradient(
+        to bottom,
+        #ffffff 0%,
+        #ffffff 5%,
+        #00ff41 10%,
+        #00ff41 20%,
+        #00dd33 30%,
+        #00bb22 40%,
+        #009911 50%,
+        #007700 60%,
+        #005500 70%,
+        #003300 80%,
+        rgba(0, 255, 65, 0.5) 90%,
+        transparent 100%
+    );
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    writing-mode: vertical-lr;
+    letter-spacing: 1px;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+.matrix-column.v1::before {
+    content: "SELECT FROM WHERE JOIN INDEX MODEL PREDICT TRAIN TEST SCORE API JSON Flask Pandas NumPy SKLearn TensorFlow 0.001 0.01 0.1 True False None";
+}
+
+.matrix-column.v2::before {
+    content: "0123456789 09:30 10:00 11:30 13:00 14:57 +0.56% -1.23% 3567 9821 12003 58900 2717831140";
+}
+
+.matrix-column.v3::before {
+    content: "Δ Σ λ μ θ α β γ 0123456789 + - % = MA RSI MACD VOL INDEX SIGNAL 666";
+}
+
+.matrix-column.v4::before {
+    content: "ンヲロヨモホノトソコオレメヘネテセケエルユムフヌツスクウリミヒニチシキイワラヤマハナタサカア";
+}
+
+.matrix-column.v5::before {
+    content: "THIS IS A GRADUATION PROJECT DESIGNED BY XWJ/RIORDON THIS IS A GRADUATION PROJECT DESIGNED BY XWJ/RIORDON";
+}
+
+@keyframes fall {
+    0% {
+        transform: translateY(-10%);
+        opacity: 1;
+    }
+    100% {
+        transform: translateY(100%);
+        opacity: 0;
+    }
+}
+
+@media (max-width: 768px) {
+    .matrix-column {
+        font-size: 14px;
+        line-height: 16px;
+        width: 18px;
+    }
+}
+
+@media (max-width: 480px) {
+    .matrix-column {
+        font-size: 12px;
+        line-height: 14px;
+        width: 15px;
+    }
 }
 
 ::view-transition-old(root),
@@ -89,6 +278,8 @@ a { color: inherit; text-decoration: none; }
     width: min(95%, calc(100% - 40px));
     margin: 0 auto;
     padding: 22px 0 46px;
+    position: relative;
+    z-index: 1;
 }
 
 /* 页面区块间距（section） */
@@ -106,6 +297,9 @@ a { color: inherit; text-decoration: none; }
     align-items: center;
     justify-content: flex-start;
     gap: 16px;
+    position: sticky;
+    top: 12px;
+    z-index: 50;
     padding: 14px 16px;
     border: 1px solid var(--border);
     border-radius: var(--radius);
@@ -191,11 +385,16 @@ body.light .nav-item:hover {
   用途：首页快讯占位、分析占位、预测占位等。
 */
 .card {
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    background: linear-gradient(180deg, var(--panel), var(--panel-2));
-    box-shadow: var(--shadow);
+    border: 0;
+    border-radius: 30px;
+    background: #212121;
     overflow: hidden;
+    background: rgba(255, 255, 255, 0.10);
+}
+
+body.light .card {
+    background: #e0e0e0;
+    background: rgba(255, 255, 255, 0.10);
 }
 
 /* 卡片头部（标题与分割线） */
