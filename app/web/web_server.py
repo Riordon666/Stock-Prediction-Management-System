@@ -7,6 +7,9 @@ import os
 import logging
 import threading
 import time
+import json
+import re
+import urllib.request
 from datetime import datetime, timedelta
 from typing import Any, Dict
 
@@ -20,6 +23,7 @@ import pandas as pd
 from dotenv import load_dotenv
 
 from ..core.data_provider import get_data_provider
+from ..core.news_fetcher import news_fetcher, start_news_scheduler
 
 load_dotenv()
 
@@ -42,6 +46,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 logger.info(f"基础Web服务器已启动，日志级别: {log_level}")
 
+start_news_scheduler()
 
 class _WerkzeugProgressFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
@@ -58,6 +63,13 @@ logging.getLogger('werkzeug').addFilter(_WerkzeugProgressFilter())
 
 _progress_lock = threading.Lock()
 _progress_store: Dict[str, Dict[str, Any]] = {}
+
+_hotspot_lock = threading.Lock()
+_hotspot_cache: Dict[str, Any] = {
+    'ts': 0.0,
+    'items': [],
+    'source': '',
+}
 
 
 def _progress_set(request_id: str, percent: int, stage: str) -> None:
@@ -110,6 +122,163 @@ def analysis():
 def predict():
     """股票预测页面"""
     return render_template('predict.html')
+
+
+def _is_important_news(item: Dict[str, Any]) -> bool:
+    title = str(item.get('title') or '')
+    content = str(item.get('content') or '')
+    text = (title + ' ' + content)
+    keywords = ['重要', '重磅', '突发', '紧急', '警报', '大消息', '利好', '利空']
+    return any(k in text for k in keywords)
+
+
+def _fetch_tophubdata_hotspots(limit: int) -> Dict[str, Any]:
+    access_key = (os.getenv('TOPHUBDATA_ACCESS_KEY') or '').strip()
+    if not access_key:
+        return {'items': [], 'source': ''}
+
+    url = 'https://api.tophubdata.com/nodes/1VdJkxkeLQ'
+    req = urllib.request.Request(
+        url,
+        headers={
+            'Authorization': access_key,
+            'Accept': 'application/json,text/plain,*/*',
+            'User-Agent': 'Mozilla/5.0',
+        },
+        method='GET',
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            raw = resp.read().decode('utf-8', errors='ignore')
+        payload = json.loads(raw) if raw else {}
+        data = (payload.get('data') or {}) if isinstance(payload, dict) else {}
+        items = data.get('items') or []
+
+        out = []
+        for it in items:
+            if not isinstance(it, dict):
+                continue
+            title = str(it.get('title') or '').strip()
+            link = str(it.get('url') or '').strip()
+            extra = it.get('extra')
+            extra_s = '' if extra is None else str(extra).strip()
+            if not title or not link:
+                continue
+            out.append({'title': title, 'url': link, 'extra': extra_s})
+            if len(out) >= limit:
+                break
+
+        return {'items': out, 'source': 'tophubdata'}
+    except Exception:
+        return {'items': [], 'source': ''}
+
+
+def _fetch_tophub_today_hotspots(limit: int) -> Dict[str, Any]:
+    url = 'https://r.jina.ai/http://tophub.today/n/1VdJkxkeLQ'
+    req = urllib.request.Request(
+        url,
+        headers={
+            'Accept': 'text/plain,text/markdown,*/*',
+            'User-Agent': 'Mozilla/5.0',
+        },
+        method='GET',
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            raw = resp.read().decode('utf-8', errors='ignore')
+
+        if not raw:
+            return {'items': [], 'source': ''}
+
+        out = []
+        for line in raw.splitlines():
+            m = re.match(r'^\s*\d+\.\[(.*?)\]\((https?://[^\)]+)\)', line)
+            if not m:
+                continue
+            title = (m.group(1) or '').strip()
+            link = (m.group(2) or '').strip()
+            if not title or not link:
+                continue
+            out.append({'title': title, 'url': link, 'extra': ''})
+            if len(out) >= limit:
+                break
+
+        return {'items': out, 'source': 'tophub_today'}
+    except Exception:
+        return {'items': [], 'source': ''}
+
+
+@app.route('/api/latest_news')
+def api_latest_news():
+    try:
+        days = int(request.args.get('days') or 1)
+    except Exception:
+        days = 1
+    try:
+        limit = int(request.args.get('limit') or 50)
+    except Exception:
+        limit = 50
+    try:
+        important = int(request.args.get('important') or 0)
+    except Exception:
+        important = 0
+
+    days = max(1, min(7, days))
+    limit = max(1, min(500, limit))
+
+    try:
+        items = news_fetcher.get_latest_news(days=days, limit=limit)
+        if not items:
+            try:
+                news_fetcher.fetch_and_save()
+            except Exception:
+                pass
+            items = news_fetcher.get_latest_news(days=days, limit=limit)
+
+        if important:
+            items = [x for x in items if _is_important_news(x)]
+
+        return jsonify({'success': True, 'news': items})
+    except Exception as e:
+        logger.exception('api_latest_news failed')
+        return jsonify({'success': False, 'error': str(e), 'news': []}), 500
+
+
+@app.route('/api/hotspots')
+def api_hotspots():
+    try:
+        limit = int(request.args.get('limit') or 10)
+    except Exception:
+        limit = 10
+    limit = max(1, min(30, limit))
+
+    now = time.time()
+    with _hotspot_lock:
+        cached_ts = float(_hotspot_cache.get('ts') or 0.0)
+        cached_items = _hotspot_cache.get('items')
+        if now - cached_ts < 300 and isinstance(cached_items, list):
+            return jsonify({
+                'success': True,
+                'items': cached_items,
+                'source': _hotspot_cache.get('source') or '',
+            })
+
+    data = _fetch_tophubdata_hotspots(limit)
+    if not (data.get('items') or []):
+        data = _fetch_tophub_today_hotspots(limit)
+
+    with _hotspot_lock:
+        _hotspot_cache['ts'] = now
+        _hotspot_cache['items'] = data.get('items') or []
+        _hotspot_cache['source'] = data.get('source') or ''
+
+    return jsonify({
+        'success': True,
+        'items': data.get('items') or [],
+        'source': data.get('source') or '',
+    })
 
 
 def _period_to_days(period: str) -> int:

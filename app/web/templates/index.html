@@ -6,6 +6,8 @@
     <title>股票预测系统</title>
     <link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}" />
     <link rel="stylesheet" href="{{ url_for('static', filename='css/common.css') }}" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/index.css') }}" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" />
 </head>
 
 <body>
@@ -95,42 +97,61 @@
 
         </div>
 
-        <section id="home" class="section">
-            <div class="card">
-                <div class="card-header">
-                    <h2>实时快讯</h2>
-                    <div class="hint">快讯来源：财联社。</div>
+        <div class="portal-layout">
+            <div class="portal-news">
+                <div class="portal-panel-header">
+                    <div class="portal-panel-title">
+                        <span class="portal-panel-title-text">实时快讯（来源：财联社）</span>
+                    </div>
+                    <div class="portal-panel-tools">
+                        <button class="refresh-news-btn uiverse-refresh-btn" type="button" aria-label="刷新">
+                            <span class="uiverse-fold"></span>
+                            <span class="uiverse-points" aria-hidden="true">
+                                <span class="uiverse-point"></span>
+                                <span class="uiverse-point"></span>
+                                <span class="uiverse-point"></span>
+                                <span class="uiverse-point"></span>
+                                <span class="uiverse-point"></span>
+                                <span class="uiverse-point"></span>
+                                <span class="uiverse-point"></span>
+                                <span class="uiverse-point"></span>
+                                <span class="uiverse-point"></span>
+                                <span class="uiverse-point"></span>
+                            </span>
+                            <span class="uiverse-inner">
+                                <svg class="uiverse-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+                                    <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+                                    <path d="M21 3v6h-6" />
+                                </svg>
+                                <span>刷新</span>
+                            </span>
+                        </button>
+                        <div class="checkbox-wrapper only-important-toggle">
+                            <input id="only-important" type="checkbox">
+                            <label class="only-important-btn" for="only-important" aria-label="只看重要" title="只看重要">
+                                <div class="tick_mark"></div>
+                            </label>
+                            <label class="only-important-text" for="only-important">只看重要</label>
+                        </div>
+                    </div>
                 </div>
-                <div class="card-body">
-                    <div class="placeholder">实时快讯（预留位置）</div>
+                <div class="portal-panel-body" id="news-timeline" aria-live="polite">
+                    <div class="portal-loading">加载新闻中...</div>
                 </div>
-                <div class="card-body">
-                    <div class="placeholder">实时快讯（预留位置）</div>
-                </div>
-                <div class="card-body">
-                    <div class="placeholder">实时快讯（预留位置）</div>
-                </div>
-                <div class="card-body">
-                    <div class="placeholder">实时快讯（预留位置）</div>
-                </div>
-                <div class="card-body">
-                    <div class="placeholder">实时快讯（预留位置）</div>
-                </div>
-                <div class="card-body">
-                    <div class="placeholder">实时快讯（预留位置）</div>
-                </div>
-                <div class="card-body">
-                    <div class="placeholder">实时快讯（预留位置）</div>
-                </div>
-                <div class="card-body">
-                    <div class="placeholder">实时快讯（预留位置）</div>
-                </div>
-                <div class="card-body">
-                    <div class="placeholder">实时快讯（预留位置）</div>
-                </div>
-
             </div>
-        </section>
+
+            <aside class="portal-hotspot" aria-label="热点">
+                <div class="portal-panel-header">
+                    <div class="portal-panel-title">
+                        <i class="fas fa-fire"></i>
+                        <span class="portal-panel-title-text">财联社股市-今日热榜</span>
+                    </div>
+                </div>
+                <div class="portal-panel-body" id="hotspot-list">
+                    <div class="portal-loading">加载热点中...</div>
+                </div>
+            </aside>
+        </div>
 
         <footer class="site-footer">
             <div class="site-footer-inner">
@@ -161,8 +182,77 @@
                 </div>
             </div>
         </footer>
+
+    <!-- 页脚固定区域 -->
+    <div class="portal-footer">
+        <div class="market-status-line" aria-label="市场状态">
+            <div class="ms-item" id="china-market">
+                <i class="fas fa-circle"></i>
+                <span class="ms-name">A股</span>
+                <span class="status-text">加载中...</span>
+            </div>
+            <div class="ms-item" id="hk-market">
+                <i class="fas fa-circle"></i>
+                <span class="ms-name">港股</span>
+                <span class="status-text">加载中...</span>
+            </div>
+            <div class="ms-item" id="taiwan-market">
+                <i class="fas fa-circle"></i>
+                <span class="ms-name">台股</span>
+                <span class="status-text">加载中...</span>
+            </div>
+            <div class="ms-item" id="japan-market">
+                <i class="fas fa-circle"></i>
+                <span class="ms-name">日经</span>
+                <span class="status-text">加载中...</span>
+            </div>
+            <div class="ms-item" id="uk-market">
+                <i class="fas fa-circle"></i>
+                <span class="ms-name">英股</span>
+                <span class="status-text">加载中...</span>
+            </div>
+            <div class="ms-item" id="german-market">
+                <i class="fas fa-circle"></i>
+                <span class="ms-name">德股</span>
+                <span class="status-text">加载中...</span>
+            </div>
+            <div class="ms-item" id="france-market">
+                <i class="fas fa-circle"></i>
+                <span class="ms-name">法股</span>
+                <span class="status-text">加载中...</span>
+            </div>
+            <div class="ms-item" id="us-market">
+                <i class="fas fa-circle"></i>
+                <span class="ms-name">美股</span>
+                <span class="status-text">加载中...</span>
+            </div>
+            <div class="ms-item" id="nasdaq-market">
+                <i class="fas fa-circle"></i>
+                <span class="ms-name">纳指</span>
+                <span class="status-text">加载中...</span>
+            </div>
+            <div class="ms-item" id="brazil-market">
+                <i class="fas fa-circle"></i>
+                <span class="ms-name">巴西</span>
+                <span class="status-text">加载中...</span>
+            </div>
+
+            <div class="ms-meta" aria-label="时间与倒计时">
+                <span class="ms-time">当前时间: <span id="current-time-value">{{ current_time }}</span></span>
+                <span class="ms-split">|</span>
+                <span class="ms-countdown" id="refresh-time">刷新倒计时: 5:00</span>
+            </div>
+        </div>
+        <div class="ticker-news" id="ticker-container" aria-label="滚动快讯">
+            <div class="ticker-wrapper">
+                <div class="ticker-item">最新消息加载中...</div>
+            </div>
+        </div>
+    </div>
     </div>
 
+    <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
     <script src="{{ url_for('static', filename='js/common.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/index.js') }}"></script>
 </body>
 </html>
