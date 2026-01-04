@@ -1,4 +1,4 @@
-$(document).ready(function() {
+﻿$(document).ready(function() {
 
     // 快速分析按钮点击事件
     $('#quick-analysis-btn').click(function() {
@@ -37,13 +37,12 @@ $(document).ready(function() {
     // 刷新按钮点击事件
     $('.refresh-news-btn').click(function() {
         isNewsExpanded = false;
-        loadLatestNews();
-        loadHotspots();
-        startTickerNews();
-        refreshCountdown = 300;
-        if ($('#refresh-time').length) {
-            $('#refresh-time').text('刷新倒计时: 5:00');
-        }
+        resetAutoFetchTimer();
+        triggerNewsFetch(function () {
+            loadLatestNews();
+            loadHotspots();
+            startTickerNews();
+        });
     });
 
     // 只看重要切换事件
@@ -65,23 +64,174 @@ $(document).ready(function() {
         }
     });
 
-    // 定时刷新
-    setInterval(function() {
-        updateMarketStatus();
-        loadLatestNews(true); // 静默刷新
-        loadHotspots();
-        startTickerNews();
-        refreshCountdown = 300;
-        if ($('#refresh-time').length) {
-            $('#refresh-time').text('刷新倒计时: 5:00');
-        }
-    }, 300000); // 5分钟
+    // 启动自动获取任务（可被手动刷新重置到5分钟）
+    resetAutoFetchTimer();
 
     setInterval(function() {
         updateCurrentTime();
         updateRefreshCountdown();
     }, 1000);
 });
+
+var refreshCountdown = 300;
+
+var tickerAnimation = null;
+var tickerSignature = '';
+var tickerRafId = 0;
+
+var autoFetchTimerId = 0;
+
+function triggerNewsFetch(done) {
+    $.ajax({
+        url: '/api/fetch_news',
+        method: 'POST',
+        complete: function () {
+            if (typeof done === 'function') {
+                done();
+            }
+        }
+    });
+}
+
+function resetAutoFetchTimer() {
+    try {
+        if (autoFetchTimerId) {
+            clearTimeout(autoFetchTimerId);
+        }
+    } catch (e) {}
+
+    refreshCountdown = 300;
+    if ($('#refresh-time').length) {
+        $('#refresh-time').text('刷新倒计时: 5:00');
+    }
+
+    autoFetchTimerId = setTimeout(function () {
+        updateMarketStatus();
+        triggerNewsFetch(function () {
+            loadLatestNews(true);
+            loadHotspots();
+            startTickerNews();
+        });
+        resetAutoFetchTimer();
+    }, 300000);
+}
+
+function updateMarketStatus() {
+    const now = new Date();
+    const hours = now.getHours();
+    const minutes = now.getMinutes();
+    const weekday = now.getDay();
+
+    const isWeekend = weekday === 0 || weekday === 6;
+
+    let chinaStatus = { open: false, text: '未开市' };
+    if (!isWeekend && ((hours === 9 && minutes >= 30) || hours === 10 || (hours === 11 && minutes <= 30) || (hours >= 13 && hours < 15))) {
+        chinaStatus = { open: true, text: '交易中' };
+    }
+
+    let hkStatus = { open: false, text: '未开市' };
+    if (!isWeekend && ((hours === 9 && minutes >= 30) || hours === 10 || hours === 11 || (hours >= 13 && hours < 16))) {
+        hkStatus = { open: true, text: '交易中' };
+    }
+
+    let taiwanStatus = { open: false, text: '未开市' };
+    if (!isWeekend && (hours === 9 || hours === 10 || hours === 11 || hours === 12 || (hours === 13 && minutes <= 30))) {
+        taiwanStatus = { open: true, text: '交易中' };
+    }
+
+    let japanStatus = { open: false, text: '未开市' };
+    if (!isWeekend && (hours === 9 || hours === 10 || (hours === 11 && minutes <= 30) || (hours === 12 && minutes >= 30) || hours === 13 || hours === 14)) {
+        japanStatus = { open: true, text: '交易中' };
+    }
+
+    let ukStatus = { open: false, text: '未开市' };
+    if (!isWeekend && ((hours >= 15 && hours < 23) || (hours === 23 && minutes <= 30))) {
+        ukStatus = { open: true, text: '交易中' };
+    }
+
+    let germanStatus = { open: false, text: '未开市' };
+    if (!isWeekend && ((hours >= 15 && hours < 23) || (hours === 23 && minutes <= 30))) {
+        germanStatus = { open: true, text: '交易中' };
+    }
+
+    let franceStatus = { open: false, text: '未开市' };
+    if (!isWeekend && ((hours >= 15 && hours < 23) || (hours === 23 && minutes <= 30))) {
+        franceStatus = { open: true, text: '交易中' };
+    }
+
+    let usStatus = { open: false, text: '未开市' };
+    if ((hours >= 21 && minutes >= 30) || hours >= 22 || hours < 4) {
+        const usDay = hours < 12 ? (weekday === 6 ? 5 : weekday - 1) : weekday;
+        if (usDay !== 0 && usDay !== 6) {
+            usStatus = { open: true, text: '交易中' };
+        }
+    }
+
+    let nasdaqStatus = usStatus;
+
+    let brazilStatus = { open: false, text: '未开市' };
+    if ((hours >= 20 && minutes >= 30) || hours >= 21 || hours < 3) {
+        const brazilDay = hours < 12 ? (weekday === 6 ? 5 : weekday - 1) : weekday;
+        if (brazilDay !== 0 && brazilDay !== 6) {
+            brazilStatus = { open: true, text: '交易中' };
+        }
+    }
+
+    updateMarketStatusUI('china-market', chinaStatus);
+    updateMarketStatusUI('hk-market', hkStatus);
+    updateMarketStatusUI('taiwan-market', taiwanStatus);
+    updateMarketStatusUI('japan-market', japanStatus);
+
+    updateMarketStatusUI('uk-market', ukStatus);
+    updateMarketStatusUI('german-market', germanStatus);
+    updateMarketStatusUI('france-market', franceStatus);
+
+    updateMarketStatusUI('us-market', usStatus);
+    updateMarketStatusUI('nasdaq-market', nasdaqStatus);
+    updateMarketStatusUI('brazil-market', brazilStatus);
+}
+
+function updateMarketStatusUI(elementId, status) {
+    const element = $(`#${elementId}`);
+    if (!element.length) {
+        return;
+    }
+    const iconElement = element.find('i');
+    const textElement = element.find('.status-text');
+
+    if (status.open) {
+        iconElement.removeClass('status-closed').addClass('status-open');
+    } else {
+        iconElement.removeClass('status-open').addClass('status-closed');
+    }
+
+    textElement.text(status.text);
+}
+
+function updateRefreshCountdown() {
+    if ($('#refresh-time').length === 0) {
+        return;
+    }
+
+    refreshCountdown--;
+    if (refreshCountdown <= 0) {
+        refreshCountdown = 300;
+    }
+
+    const minutes = Math.floor(refreshCountdown / 60);
+    const seconds = refreshCountdown % 60;
+    $('#refresh-time').text(`刷新倒计时: ${minutes}:${seconds < 10 ? '0' + seconds : seconds}`);
+}
+
+function updateCurrentTime() {
+    if ($('#current-time-value').length === 0) {
+        return;
+    }
+
+    const now = new Date();
+    const timeString = now.toLocaleTimeString('zh-CN', { hour12: false });
+    $('#current-time-value').text(timeString);
+}
 
 // HTML转义辅助函数
 function escapeHtml(input) {
@@ -95,8 +245,8 @@ function escapeHtml(input) {
 }
 
 // 加载最新新闻函数
-let lastNewsList = [];
-let isNewsExpanded = false;
+var lastNewsList = [];
+var isNewsExpanded = false;
 
 function isMobileView() {
     try {
@@ -291,13 +441,10 @@ function displayNewsTimeline(newsList) {
         timelineHtml += `<div class="news-expand-wrap"><button type="button" class="news-expand-btn" id="news-expand-toggle">${isNewsExpanded ? '收起' : '展开查看全部新闻'}</button></div>`;
     }
 
-    // 更新DOM
     $('#news-timeline').html(timelineHtml);
 }
 
-// 日期格式化辅助函数
 function formatDate(dateStr) {
-    // 检查是否与当天日期相同
     const today = new Date();
     const todayStr = today.toISOString().split('T')[0];
 
@@ -305,7 +452,6 @@ function formatDate(dateStr) {
         return '';
     }
 
-    // 昨天
     const yesterday = new Date(today);
     yesterday.setDate(yesterday.getDate() - 1);
     const yesterdayStr = yesterday.toISOString().split('T')[0];
@@ -314,151 +460,129 @@ function formatDate(dateStr) {
         return '昨天';
     }
 
-    // 其他日期用中文格式
     const date = new Date(dateStr);
     return `${date.getMonth() + 1}月${date.getDate()}日`;
 }
 
-// 添加页面自动刷新功能
-let refreshCountdown = 300; // 5分钟倒计时（秒）
+// 显示滚动新闻
+function displayTickerNews(newsList) {
+    const wrapper = $('#ticker-container .ticker-wrapper');
+    const list = Array.isArray(newsList) ? newsList : [];
 
-// 更新市场状态
-function updateMarketStatus() {
-    const now = new Date();
-    const hours = now.getHours();
-    const minutes = now.getMinutes();
-    const weekday = now.getDay(); // 0为周日，6为周六
-
-    // 检查是否为工作日
-    const isWeekend = weekday === 0 || weekday === 6;
-
-    // 亚太市场时区
-    // A股状态 (9:30-11:30, 13:00-15:00)
-    let chinaStatus = { open: false, text: '未开市' };
-    if (!isWeekend && ((hours === 9 && minutes >= 30) || hours === 10 || (hours === 11 && minutes <= 30) ||
-        (hours >= 13 && hours < 15))) {
-        chinaStatus = { open: true, text: '交易中' };
-    }
-
-    // 港股状态 (9:30-12:00, 13:00-16:00)
-    let hkStatus = { open: false, text: '未开市' };
-    if (!isWeekend && ((hours === 9 && minutes >= 30) || hours === 10 || hours === 11 ||
-        (hours >= 13 && hours < 16))) {
-        hkStatus = { open: true, text: '交易中' };
-    }
-
-    // 台股状态 (9:00-13:30)
-    let taiwanStatus = { open: false, text: '未开市' };
-    if (!isWeekend && ((hours === 9) || hours === 10 || hours === 11 || hours === 12 ||
-        (hours === 13 && minutes <= 30))) {
-        taiwanStatus = { open: true, text: '交易中' };
-    }
-
-    // 日本股市 (9:00-11:30, 12:30-15:00)
-    let japanStatus = { open: false, text: '未开市' };
-    if (!isWeekend && ((hours === 9) || hours === 10 || (hours === 11 && minutes <= 30) ||
-        (hours === 12 && minutes >= 30) || hours === 13 || hours === 14)) {
-        japanStatus = { open: true, text: '交易中' };
-    }
-
-    // 欧洲市场 - 需要调整时区，这里是基于欧洲夏令时(UTC+2)与北京时间(UTC+8)相差6小时计算
-    // 英国股市 (伦敦，北京时间15:00-23:30)
-    let ukStatus = { open: false, text: '未开市' };
-    if (!isWeekend && ((hours >= 15 && hours < 23) || (hours === 23 && minutes <= 30))) {
-        ukStatus = { open: true, text: '交易中' };
-    }
-
-    // 德国股市 (法兰克福，北京时间15:00-23:30)
-    let germanStatus = { open: false, text: '未开市' };
-    if (!isWeekend && ((hours >= 15 && hours < 23) || (hours === 23 && minutes <= 30))) {
-        germanStatus = { open: true, text: '交易中' };
-    }
-
-    // 法国股市 (巴黎，北京时间15:00-23:30)
-    let franceStatus = { open: false, text: '未开市' };
-    if (!isWeekend && ((hours >= 15 && hours < 23) || (hours === 23 && minutes <= 30))) {
-        franceStatus = { open: true, text: '交易中' };
-    }
-
-    // 美洲市场
-    // 美股状态 (纽约，北京时间21:30-4:00)
-    let usStatus = { open: false, text: '未开市' };
-    if ((hours >= 21 && minutes >= 30) || hours >= 22 || hours < 4) {
-        // 检查美股的工作日 (当北京时间是周六早上，美国还是周五)
-        const usDay = hours < 12 ? (weekday === 6 ? 5 : weekday - 1) : weekday;
-        if (usDay !== 0 && usDay !== 6) {
-            usStatus = { open: true, text: '交易中' };
-        }
-    }
-
-    // 纳斯达克与美股相同
-    let nasdaqStatus = usStatus;
-
-    // 巴西股市 (圣保罗，北京时间20:30-3:00)
-    let brazilStatus = { open: false, text: '未开市' };
-    if ((hours >= 20 && minutes >= 30) || hours >= 21 || hours < 3) {
-        const brazilDay = hours < 12 ? (weekday === 6 ? 5 : weekday - 1) : weekday;
-        if (brazilDay !== 0 && brazilDay !== 6) {
-            brazilStatus = { open: true, text: '交易中' };
-        }
-    }
-
-    // 更新DOM
-    updateMarketStatusUI('china-market', chinaStatus);
-    updateMarketStatusUI('hk-market', hkStatus);
-    updateMarketStatusUI('taiwan-market', taiwanStatus);
-    updateMarketStatusUI('japan-market', japanStatus);
-
-    updateMarketStatusUI('uk-market', ukStatus);
-    updateMarketStatusUI('german-market', germanStatus);
-    updateMarketStatusUI('france-market', franceStatus);
-
-    updateMarketStatusUI('us-market', usStatus);
-    updateMarketStatusUI('nasdaq-market', nasdaqStatus);
-    updateMarketStatusUI('brazil-market', brazilStatus);
-}
-
-// 更新市场状态UI
-function updateMarketStatusUI(elementId, status) {
-    const element = $(`#${elementId}`);
-    const iconElement = element.find('i');
-    const textElement = element.find('.status-text');
-
-    if (status.open) {
-        iconElement.removeClass('status-closed').addClass('status-open');
-    } else {
-        iconElement.removeClass('status-open').addClass('status-closed');
-    }
-
-    textElement.text(status.text);
-}
-
-// 更新倒计时
-function updateRefreshCountdown() {
-    if ($('#refresh-time').length === 0) {
+    if (list.length === 0) {
+        wrapper.html('<div class="ticker-item">暂无最新消息</div>');
+        tickerSignature = '';
+        try {
+            if (tickerAnimation) {
+                tickerAnimation.cancel();
+            }
+        } catch (e) {}
+        tickerAnimation = null;
+        try {
+            if (tickerRafId) {
+                cancelAnimationFrame(tickerRafId);
+            }
+        } catch (e) {}
+        tickerRafId = 0;
         return;
     }
 
-    refreshCountdown--;
+    const baseItems = list.slice(0, 3).map(function (news) {
+        return escapeHtml((news && (news.content || news.title)) || '');
+    }).filter(Boolean);
 
-    if (refreshCountdown <= 0) {
-        refreshCountdown = 300;
-    }
-
-    const minutes = Math.floor(refreshCountdown / 60);
-    const seconds = refreshCountdown % 60;
-    $('#refresh-time').text(`刷新倒计时: ${minutes}:${seconds < 10 ? '0' + seconds : seconds}`);
-}
-
-// 更新当前时间
-function updateCurrentTime() {
-    if ($('#current-time-value').length === 0) {
+    if (baseItems.length === 0) {
+        wrapper.html('<div class="ticker-item">暂无最新消息</div>');
         return;
     }
 
-    const now = new Date();
-    const timeString = now.toLocaleTimeString('zh-CN', { hour12: false });
-    $('#current-time-value').text(timeString);
+    const nextSignature = baseItems.join('||');
+    if (nextSignature === tickerSignature && (tickerAnimation || tickerRafId)) {
+        return;
+    }
+    tickerSignature = nextSignature;
+
+    try {
+        if (tickerAnimation) {
+            tickerAnimation.cancel();
+        }
+    } catch (e) {}
+    tickerAnimation = null;
+    try {
+        if (tickerRafId) {
+            cancelAnimationFrame(tickerRafId);
+        }
+    } catch (e) {}
+    tickerRafId = 0;
+
+    let tickerItems = '';
+    baseItems.forEach(function (text) {
+        tickerItems += `<div class="ticker-item" data-cycle="1">${text}</div>`;
+    });
+    // Large gap between 3rd item and restart
+    tickerItems += `<div class="ticker-loop-gap" aria-hidden="true"></div>`;
+    baseItems.forEach(function (text) {
+        tickerItems += `<div class="ticker-item" data-cycle="2">${text}</div>`;
+    });
+
+    wrapper.html(tickerItems);
+    wrapper.css('animation', 'none');
+
+    const el = wrapper[0];
+    const container = document.getElementById('ticker-container');
+    if (!el || !container) {
+        return;
+    }
+
+    requestAnimationFrame(function () {
+        const startX = 0;
+
+        const first1 = el.querySelector('.ticker-item[data-cycle="1"]');
+        const first2 = el.querySelector('.ticker-item[data-cycle="2"]');
+        let cycleWidth = 0;
+        if (first1 && first2) {
+            cycleWidth = Math.max(0, first2.offsetLeft - first1.offsetLeft);
+        }
+        if (!cycleWidth) {
+            cycleWidth = Math.floor((el.scrollWidth || 0) / 2);
+        }
+
+        const pxPerSecond = isMobileView() ? 130 : 75;
+        const durationMs = Math.max(6000, Math.round((cycleWidth / pxPerSecond) * 1000));
+
+        el.style.transform = `translateX(${startX}px)`;
+
+        if (typeof el.animate === 'function') {
+            try {
+                tickerAnimation = el.animate(
+                    [
+                        { transform: `translateX(${startX}px)` },
+                        { transform: `translateX(${startX - cycleWidth}px)` },
+                    ],
+                    {
+                        duration: durationMs,
+                        iterations: Infinity,
+                        easing: 'linear',
+                    }
+                );
+                return;
+            } catch (e) {
+                tickerAnimation = null;
+            }
+        }
+
+        const startTs = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+        const tick = function (nowTs) {
+            const now = (typeof nowTs === 'number') ? nowTs : ((typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now());
+            const elapsed = Math.max(0, now - startTs);
+            const t = durationMs > 0 ? (elapsed % durationMs) : 0;
+            const p = durationMs > 0 ? (t / durationMs) : 0;
+            const x = startX - (p * cycleWidth);
+            el.style.transform = `translateX(${x}px)`;
+            tickerRafId = requestAnimationFrame(tick);
+        };
+        tickerRafId = requestAnimationFrame(tick);
+    });
 }
 
 // 启动滚动新闻
@@ -482,36 +606,4 @@ function startTickerNews() {
             $('#ticker-container .ticker-wrapper').html('<div class="ticker-item">获取最新消息失败</div>');
         }
     });
-}
-
-// 显示滚动新闻
-function displayTickerNews(newsList) {
-    if (newsList.length === 0) {
-        $('#ticker-container .ticker-wrapper').html('<div class="ticker-item">暂无最新消息</div>');
-        return;
-    }
-
-    const wrapper = $('#ticker-container .ticker-wrapper');
-    const baseItems = (newsList || []).slice(0, 12).map(function (news) {
-        return escapeHtml((news && (news.content || news.title)) || '');
-    }).filter(Boolean);
-
-    if (baseItems.length === 0) {
-        wrapper.html('<div class="ticker-item">暂无最新消息</div>');
-        return;
-    }
-
-    const items = baseItems.concat(baseItems);
-    let tickerItems = '';
-    items.forEach(function (text) {
-        tickerItems += `<div class="ticker-item">${text}</div>`;
-    });
-
-    wrapper.html(tickerItems);
-
-    // 触发重新启动动画（避免连续刷新时动画不重置）
-    wrapper.css('animation', 'none');
-    void wrapper[0].offsetHeight;
-    const duration = isMobileView() ? 20 : 36;
-    wrapper.css('animation', 'ticker ' + duration + 's linear infinite');
 }

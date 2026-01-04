@@ -13,7 +13,7 @@
 
 | 模块       | 路由/入口 | 功能说明 | 状态 |
 |----------| --- | --- | --- |
-| 首页(实时快讯) | `/` | 正在开发中 | 开发中 |
+| 首页(实时快讯) | `/` | 实时快讯时间线（默认近2天，最多500条）<br>只看重要（关键词过滤）<br>手动刷新（触发后端抓取并刷新列表）<br>自动刷新（5分钟一次）<br>底部滚动快讯（取最新3条，无缝循环）<br>今日热榜（TopHub，失败回退并缓存） | 已实现 |
 | 股票分析     | `/analysis` | 价格趋势（收盘价折线 + MA5/MA20/MA60）<br>技术指标（RSI / MACD：含 Signal、Histogram）<br>成交量（柱状图 + 均量线 MA20）<br>支撑/压力位展示<br>雷达图多维度评分<br>AI 分析报告展示 | 已实现 |
 | 股票预测     | `/predict` | 正在开发中 | 开发中 |
 
@@ -90,6 +90,7 @@ python run.py
 - `PORT`：服务端口（默认 8888）
 - `LOG_LEVEL`：日志级别（默认 INFO）
 - `LOG_FILE`：日志文件路径（默认 `data/logs/server.log`）
+- `TOPHUBDATA_ACCESS_KEY`：可选。用于访问 TopHubData 官方 API 获取“今日热榜”（更稳定）。未配置时会自动回退到 `tophub.today` 抓取解析。
 
 示例（.env）：
 
@@ -97,7 +98,19 @@ python run.py
 PORT=8888
 LOG_LEVEL=INFO
 LOG_FILE=data/logs/server.log
+TOPHUBDATA_ACCESS_KEY=your_key_here
 ```
+
+## 首页实时快讯相关 API
+
+- `GET /api/latest_news`
+  - 参数：`days`（1-7）、`limit`（1-500）、`important`（0/1）
+  - 说明：返回实时快讯列表；若本地无数据会尝试触发一次抓取。
+- `POST /api/fetch_news`
+  - 说明：触发后台抓取财联社电报数据（异步执行）。
+- `GET /api/hotspots`
+  - 参数：`limit`（1-30）
+  - 说明：返回“今日热榜”；会缓存最近一次非空结果，抓取/解析失败时回退到上次非空数据，避免频繁出现“暂无热点”。
 
 ## 数据源说明
 
@@ -124,4 +137,4 @@ LOG_FILE=data/logs/server.log
 MIT License
 
 ## 免责声明
-本系统仅为个人毕业设计，仅用于学术研究用途，不构成任何投资建议。股票数据来源于公开市场，预测结果仅供参考。
+本系统为个人设计与研究项目，仅用于学习与学术研究用途，不构成任何投资建议。股票数据来源于公开市场，预测结果可能存在误差，仅供参考。投资有风险，入市需谨慎！

@@ -67,6 +67,7 @@ _progress_store: Dict[str, Dict[str, Any]] = {}
 _hotspot_lock = threading.Lock()
 _hotspot_cache: Dict[str, Any] = {
     'ts': 0.0,
+    'fail_ts': 0.0,
     'items': [],
     'source': '',
 }
@@ -170,7 +171,8 @@ def _fetch_tophubdata_hotspots(limit: int) -> Dict[str, Any]:
                 break
 
         return {'items': out, 'source': 'tophubdata'}
-    except Exception:
+    except Exception as e:
+        logger.warning('fetch tophubdata hotspots failed: %s', e)
         return {'items': [], 'source': ''}
 
 
@@ -194,11 +196,12 @@ def _fetch_tophub_today_hotspots(limit: int) -> Dict[str, Any]:
 
         out = []
         for line in raw.splitlines():
-            m = re.match(r'^\s*\d+\.\[(.*?)\]\((https?://[^\)]+)\)', line)
+            m = re.match(r'^\s*\d+\.\s*\[(.*?)\]\((https?://[^\)]+)\)', line)
             if not m:
                 continue
             title = (m.group(1) or '').strip()
             link = (m.group(2) or '').strip()
+
             if not title or not link:
                 continue
             out.append({'title': title, 'url': link, 'extra': ''})
@@ -206,7 +209,8 @@ def _fetch_tophub_today_hotspots(limit: int) -> Dict[str, Any]:
                 break
 
         return {'items': out, 'source': 'tophub_today'}
-    except Exception:
+    except Exception as e:
+        logger.warning('fetch tophub.today hotspots failed: %s', e)
         return {'items': [], 'source': ''}
 
 
@@ -246,6 +250,22 @@ def api_latest_news():
         return jsonify({'success': False, 'error': str(e), 'news': []}), 500
 
 
+@app.route('/api/fetch_news', methods=['POST'])
+def api_fetch_news():
+    try:
+        def _run_fetch() -> None:
+            try:
+                news_fetcher.fetch_and_save()
+            except Exception:
+                logger.exception('api_fetch_news background fetch failed')
+
+        threading.Thread(target=_run_fetch, daemon=True).start()
+        return jsonify({'success': True})
+    except Exception as e:
+        logger.exception('api_fetch_news failed')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @app.route('/api/hotspots')
 def api_hotspots():
     try:
@@ -257,27 +277,52 @@ def api_hotspots():
     now = time.time()
     with _hotspot_lock:
         cached_ts = float(_hotspot_cache.get('ts') or 0.0)
+        cached_fail_ts = float(_hotspot_cache.get('fail_ts') or 0.0)
         cached_items = _hotspot_cache.get('items')
-        if now - cached_ts < 300 and isinstance(cached_items, list):
+        cached_source = _hotspot_cache.get('source') or ''
+
+        if isinstance(cached_items, list) and cached_items and (now - cached_ts < 300):
             return jsonify({
                 'success': True,
                 'items': cached_items,
-                'source': _hotspot_cache.get('source') or '',
+                'source': cached_source,
+            })
+
+        # Avoid hammering upstream on repeated failures
+        if (not cached_items) and (now - cached_fail_ts < 20):
+            return jsonify({
+                'success': True,
+                'items': [],
+                'source': cached_source,
             })
 
     data = _fetch_tophubdata_hotspots(limit)
     if not (data.get('items') or []):
         data = _fetch_tophub_today_hotspots(limit)
 
+    items = data.get('items') or []
+    source = data.get('source') or ''
+
     with _hotspot_lock:
-        _hotspot_cache['ts'] = now
-        _hotspot_cache['items'] = data.get('items') or []
-        _hotspot_cache['source'] = data.get('source') or ''
+        cached_items = _hotspot_cache.get('items')
+        cached_source = _hotspot_cache.get('source') or ''
+
+        # Only cache non-empty results; keep last non-empty as fallback.
+        if items:
+            _hotspot_cache['ts'] = now
+            _hotspot_cache['items'] = items
+            _hotspot_cache['source'] = source
+            _hotspot_cache['fail_ts'] = 0.0
+        else:
+            _hotspot_cache['fail_ts'] = now
+            if isinstance(cached_items, list) and cached_items:
+                items = cached_items
+                source = cached_source
 
     return jsonify({
         'success': True,
-        'items': data.get('items') or [],
-        'source': data.get('source') or '',
+        'items': items,
+        'source': source,
     })
 
 
