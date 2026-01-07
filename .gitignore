@@ -1,0 +1,8 @@
+/forecasting/models/gru/history.jsonl
+/forecasting/models/gru/meta.json
+/forecasting/models/gru/state.json
+/forecasting/models/gru/checkpoints/
+/forecasting/training_data/
+/.venv/
+/data/news/
+/data/logs/
