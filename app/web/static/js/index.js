@@ -36,6 +36,7 @@
 
     // 刷新按钮点击事件
     $('.refresh-news-btn').click(function() {
+        triggerRefreshBtnAnimation(this);
         isNewsExpanded = false;
         resetAutoFetchTimer();
         triggerNewsFetch(function () {
@@ -80,6 +81,36 @@ var tickerSignature = '';
 var tickerRafId = 0;
 
 var autoFetchTimerId = 0;
+
+function triggerRefreshBtnAnimation(btn) {
+    const $btn = $(btn);
+
+    try {
+        if (btn && typeof btn.blur === 'function') {
+            btn.blur();
+        }
+    } catch (e) {}
+
+    const timerId = $btn.data('animTimerId');
+    if (timerId) {
+        try {
+            clearTimeout(timerId);
+        } catch (e) {}
+    }
+
+    $btn.removeClass('is-animating');
+    try {
+        // force reflow, so class re-add triggers animation consistently
+        void btn.offsetWidth;
+    } catch (e) {}
+    $btn.addClass('is-animating');
+
+    const newTimerId = setTimeout(function () {
+        $btn.removeClass('is-animating');
+    }, 1100);
+
+    $btn.data('animTimerId', newTimerId);
+}
 
 function triggerNewsFetch(done) {
     $.ajax({

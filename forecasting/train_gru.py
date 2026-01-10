@@ -29,11 +29,13 @@ RESET = False
 
 LOAD_EXISTING_WEIGHTS = True
 
+AUTOREGRESSIVE_TRAINING = True
+
 NORMALIZE_HK_SYMBOLS_FILE = True
 
-AUTO_MATCH_A_LIMIT_TO_HK = True
+AUTO_MATCH_A_LIMIT_TO_HK = True # 如果为 True，则训练过程中如果 A 股股票池有变化，将自动将 A_LIMIT 个 A 股股票加入 HK 股股票池
 
-AUTO_RESET_ON_UNIVERSE_MISMATCH = True
+AUTO_RESET_ON_UNIVERSE_MISMATCH = True # 如果为 True，则训练过程中如果股票池有变化，将自动重置训练进度
 
 WIPE_ALL_GRU_ARTIFACTS = False #这行代码不要乱改，会删除所有模型权重并从头开始训练，保持他是False
 
@@ -236,6 +238,7 @@ def main(argv=None):
         steps=int(args.steps),
         reset=(True if WIPE_ALL_GRU_ARTIFACTS else bool(args.reset)),
         load_existing_weights=bool(LOAD_EXISTING_WEIGHTS),
+        autoregressive_training=bool(AUTOREGRESSIVE_TRAINING),
     )
 
     try:

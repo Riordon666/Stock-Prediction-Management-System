@@ -15,9 +15,40 @@
     min-width: 200px;
 }
 
+.analysis-form-row .analysis-action {
+    flex: 0 0 170px;
+    min-width: 170px;
+    display: flex;
+    justify-content: flex-end;
+}
+
+.analysis-form-row .analysis-action .analysis-submit {
+    height: 100%;
+}
+
+@media (min-width: 961px) {
+    .analysis-form-row {
+        flex-wrap: nowrap;
+        align-items: stretch;
+    }
+
+    .analysis-form-row .field-code,
+    .analysis-form-row .field-market,
+    .analysis-form-row .field-horizon {
+        flex: 1 1 0;
+        min-width: 200px;
+    }
+}
+
+@media (max-width: 960px) {
+    .analysis-form-row {
+        flex-wrap: wrap;
+    }
+}
+
 .analysis-form .input-group {
     display: flex;
-    align-items: stretch;
+    align-items: center;
     border: 1px solid var(--border);
     border-radius: 999px;
     overflow: hidden;
@@ -39,6 +70,9 @@ body.light .analysis-form .input-group:focus-within {
 }
 
 .analysis-form .input-group-text {
+    display: flex;
+    align-items: center;
+    justify-content: center;
     flex: 0 0 auto;
     padding: 8px 12px;
     font-size: 12px;
@@ -117,6 +151,11 @@ html.light .analysis-form option {
     font-size: 13px;
     font-weight: 900;
     cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    white-space: nowrap;
 }
 
 .analysis-form .analysis-submit:hover {
@@ -132,6 +171,7 @@ html.light .analysis-form option {
     display: flex;
     gap: 12px;
     flex-wrap: wrap;
+    margin-top: 10px;
 }
 
 .introduction {

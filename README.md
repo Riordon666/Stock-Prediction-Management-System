@@ -15,7 +15,7 @@
 |----------| --- | --- | --- |
 | 首页(实时快讯) | `/` | 实时快讯时间线（默认近2天，最多500条）<br>只看重要（关键词过滤）<br>手动刷新（触发后端抓取并刷新列表）<br>自动刷新（5分钟一次）<br>底部滚动快讯（取最新3条，无缝循环）<br>今日热榜（TopHub，失败回退并缓存） | 已实现 |
 | 股票分析     | `/analysis` | 价格趋势（收盘价折线 + MA5/MA20/MA60）<br>技术指标（RSI / MACD：含 Signal、Histogram）<br>成交量（柱状图 + 均量线 MA20）<br>支撑/压力位展示<br>雷达图多维度评分<br>AI 分析报告展示 | 已实现 |
-| 股票预测     | `/predict` | 正在开发中 | 开发中 |
+| 股票预测     | `/predict` | 使用本地训练的 GRU 模型进行预测：最近 N 日历史 + 递推预测未来 10/20/30 天<br>预测结果可视化（历史+预测分段展示） | 已实现 |
 
 
 ## 技术栈
@@ -64,13 +64,7 @@ python -m venv .venv
 ### 2. 安装依赖
 
 ```powershell
-pip install flask python-dotenv pandas numpy akshare
-```
-
-可选（备用数据源）：
-
-```powershell
-pip install baostock
+pip install -r requirements.txt
 ```
 
 ### 3. 启动服务
@@ -111,6 +105,41 @@ TOPHUBDATA_ACCESS_KEY=your_key_here
 - `GET /api/hotspots`
   - 参数：`limit`（1-30）
   - 说明：返回“今日热榜”；会缓存最近一次非空结果，抓取/解析失败时回退到上次非空数据，避免频繁出现“暂无热点”。
+
+## 股票预测（GRU）
+
+### 预测页面
+
+- `GET /predict`
+  - 说明：股票预测页面，输入股票代码/市场/预测天数，展示历史+预测曲线。
+
+### 预测 API
+
+- `GET /api/predict_gru`
+  - 参数：
+    - `stock_code`：股票代码（A股示例：`600519`；港股示例：`00700`；美股示例：`AAPL`）
+    - `market_type`：`A` / `HK` / `US`
+    - `days`：`10` / `20` / `30`
+  - 返回：
+    - `history`：历史数据数组（`[{date, close}, ...]`）
+    - `forecast`：预测数据数组（`[{date, close}, ...]`）
+    - `boundary_date`：历史与预测的分界日期
+  - 备注：依赖本地 GRU 权重文件（见下方训练说明）。
+
+## GRU 模型训练
+
+训练脚本：
+
+```powershell
+python forecasting\train_gru.py
+```
+
+默认模型输出目录：
+
+- 权重：`forecasting/models/gru/checkpoints/latest.weights.h5`
+- 元信息：`forecasting/models/gru/meta.json`
+
+预测接口会读取上述文件；如果权重不存在，会返回“请先训练模型”。
 
 ## 数据源说明
 

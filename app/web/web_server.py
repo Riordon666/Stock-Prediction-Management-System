@@ -11,6 +11,7 @@ import json
 import re
 import urllib.request
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any, Dict
 
 # Flask相关导入
@@ -70,6 +71,12 @@ _hotspot_cache: Dict[str, Any] = {
     'fail_ts': 0.0,
     'items': [],
     'source': '',
+}
+
+_gru_model_cache: Dict[str, Any] = {
+    'model': None,
+    'meta': None,
+    'mtime': 0.0,
 }
 
 
@@ -373,6 +380,211 @@ def _get_history_df(stock_code: str, market_type: str, period: str) -> pd.DataFr
     df['date'] = pd.to_datetime(df['date'], errors='coerce')
     df = df.dropna(subset=['date', 'open', 'high', 'low', 'close']).sort_values('date')
     return df
+
+
+def _normalize_predict_code(stock_code: str, market_type: str) -> str:
+    code = (stock_code or '').strip()
+    mt = (market_type or 'A').strip().upper()
+    if mt == 'HK':
+        digits = ''.join([ch for ch in code if ch.isdigit()])
+        return digits.zfill(5) if digits else code
+    if mt == 'US':
+        return code.upper()
+    return code
+
+
+def _forecasting_root() -> Path:
+    return Path(__file__).resolve().parents[2] / 'forecasting'
+
+
+def _gru_paths() -> Dict[str, Path]:
+    root = _forecasting_root() / 'models' / 'gru'
+    ckpt = root / 'checkpoints'
+    return {
+        'root': root,
+        'meta': root / 'meta.json',
+        'weights': ckpt / 'latest.weights.h5',
+    }
+
+
+def _load_gru_meta() -> Dict[str, Any]:
+    p = _gru_paths()['meta']
+    if not p.exists():
+        return {}
+    try:
+        return json.loads(p.read_text(encoding='utf-8'))
+    except Exception:
+        return {}
+
+
+def _load_gru_model() -> Any:
+    paths = _gru_paths()
+    weights = paths['weights']
+    if not weights.exists():
+        raise FileNotFoundError(str(weights))
+
+    mtime = float(weights.stat().st_mtime)
+    if _gru_model_cache.get('model') is not None and float(_gru_model_cache.get('mtime') or 0.0) >= mtime:
+        return _gru_model_cache.get('model')
+
+    meta = _load_gru_meta()
+    lookback = int(meta.get('lookback') or 30)
+    model_cfg = meta.get('model') or {}
+
+    units = int(model_cfg.get('units') or 50)
+    layers = int(model_cfg.get('layers') or 3)
+    dropout = float(model_cfg.get('dropout') or 0.2)
+    learning_rate = float(model_cfg.get('learning_rate') or 0.001)
+
+    from forecasting.models.gru.model import build_gru_regression_model
+
+    model = build_gru_regression_model(
+        lookback=lookback,
+        units=units,
+        layers=layers,
+        dropout=dropout,
+        learning_rate=learning_rate,
+    )
+    model.load_weights(str(weights))
+
+    _gru_model_cache['model'] = model
+    _gru_model_cache['meta'] = meta
+    _gru_model_cache['mtime'] = mtime
+    return model
+
+
+def _minmax_scale_1d(values: np.ndarray) -> Dict[str, Any]:
+    x = np.asarray(values, dtype=np.float32).reshape(-1)
+    x_min = float(np.min(x))
+    x_max = float(np.max(x))
+    if x_max - x_min < 1e-12:
+        scaled = np.zeros_like(x, dtype=np.float32)
+    else:
+        scaled = ((x - x_min) / (x_max - x_min)).astype(np.float32)
+    return {'scaled': scaled, 'x_min': x_min, 'x_max': x_max}
+
+
+def _minmax_inv(v: float, x_min: float, x_max: float) -> float:
+    if abs(float(x_max) - float(x_min)) < 1e-12:
+        return float(x_min)
+    return float(v) * (float(x_max) - float(x_min)) + float(x_min)
+
+
+def _next_trading_days(start_date: datetime, n: int) -> list[str]:
+    out: list[str] = []
+    d = start_date
+    while len(out) < int(n):
+        d = d + timedelta(days=1)
+        if d.weekday() >= 5:
+            continue
+        out.append(d.strftime('%Y-%m-%d'))
+    return out
+
+
+def _fetch_last_close_n(stock_code: str, market_type: str, days: int) -> pd.DataFrame:
+    provider = get_data_provider()
+
+    end = datetime.now().date()
+    start = end - timedelta(days=int(days) * 4)
+
+    df = provider.get_stock_history(
+        code=stock_code,
+        start_date=start.strftime('%Y%m%d'),
+        end_date=end.strftime('%Y%m%d'),
+        adjust='qfq',
+        market_type=market_type,
+    )
+    if df is None or df.empty:
+        return pd.DataFrame()
+
+    df = df.copy()
+    if 'date' not in df.columns and '日期' in df.columns:
+        df['date'] = df['日期']
+
+    close_col = 'close' if 'close' in df.columns else ('收盘' if '收盘' in df.columns else None)
+    if close_col is None:
+        return pd.DataFrame()
+
+    df['date'] = pd.to_datetime(df['date'], errors='coerce')
+    df['close'] = pd.to_numeric(df[close_col], errors='coerce')
+    df = df.dropna(subset=['date', 'close']).sort_values('date')
+
+    df = df.tail(int(days)).reset_index(drop=True)
+    return df[['date', 'close']]
+
+
+@app.route('/api/predict_gru')
+def api_predict_gru():
+    stock_code = (request.args.get('stock_code') or '').strip()
+    market_type = (request.args.get('market_type') or 'A').strip().upper()
+    try:
+        predict_days = int(request.args.get('days') or 10)
+    except Exception:
+        predict_days = 10
+
+    if not stock_code:
+        return jsonify({'success': False, 'error': 'stock_code不能为空'}), 400
+    if market_type not in {'A', 'HK', 'US'}:
+        return jsonify({'success': False, 'error': '不支持的市场类型'}), 400
+    if predict_days not in {10, 20, 30}:
+        return jsonify({'success': False, 'error': 'days只支持10/20/30'}), 400
+
+    code = _normalize_predict_code(stock_code, market_type)
+
+    try:
+        model = _load_gru_model()
+        meta = dict(_gru_model_cache.get('meta') or {})
+        lookback = int(meta.get('lookback') or 30)
+
+        df = _fetch_last_close_n(code, market_type, days=int(lookback))
+        if df.empty or len(df) < lookback:
+            return jsonify({'success': False, 'error': '历史数据不足，无法预测'}), 400
+
+        close = df['close'].to_numpy(dtype=np.float32)
+        scaled_pack = _minmax_scale_1d(close)
+        series_scaled = scaled_pack['scaled']
+        x_min = float(scaled_pack['x_min'])
+        x_max = float(scaled_pack['x_max'])
+
+        window = series_scaled[-lookback:].astype(np.float32).copy()
+
+        preds_real: list[float] = []
+        for _ in range(int(predict_days)):
+            x = window.reshape((1, lookback, 1)).astype(np.float32)
+            y_pred = float(model.predict(x, verbose=0)[0][0])
+            preds_real.append(_minmax_inv(y_pred, x_min, x_max))
+            window = np.concatenate([window[1:], np.asarray([y_pred], dtype=np.float32)], axis=0)
+
+        hist = []
+        for _, r in df.iterrows():
+            hist.append({
+                'date': pd.to_datetime(r['date']).strftime('%Y-%m-%d'),
+                'close': float(r['close']),
+            })
+
+        last_dt = pd.to_datetime(df['date'].iloc[-1]).to_pydatetime()
+        future_dates = _next_trading_days(last_dt, int(predict_days))
+        forecast = []
+        for i in range(int(predict_days)):
+            forecast.append({
+                'date': future_dates[i],
+                'close': float(preds_real[i]),
+            })
+
+        return jsonify({
+            'success': True,
+            'stock_code': code,
+            'market_type': market_type,
+            'lookback': int(lookback),
+            'history': hist,
+            'forecast': forecast,
+            'boundary_date': hist[-1]['date'] if hist else '',
+        })
+    except FileNotFoundError:
+        return jsonify({'success': False, 'error': '未找到GRU模型权重文件，请先训练模型'}), 500
+    except Exception as e:
+        logger.exception('api_predict_gru failed')
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 def _compute_rsi(close: pd.Series, window: int = 14) -> float:

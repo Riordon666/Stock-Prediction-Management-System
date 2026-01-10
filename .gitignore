@@ -6,3 +6,4 @@
 /.venv/
 /data/news/
 /data/logs/
+/py.ini

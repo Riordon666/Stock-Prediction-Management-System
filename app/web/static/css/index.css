@@ -68,6 +68,16 @@ body.light .portal-panel-header {
         min-width: 0;
     }
 
+    .portal-news .portal-panel-title {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 4px;
+    }
+
+    .portal-news .portal-panel-title .hint {
+        margin: 0;
+    }
+
     .portal-panel-title-text {
         font-size: 16px;
         line-height: 1.25;
@@ -111,6 +121,17 @@ body.light .portal-panel-header {
     padding: 0 14px;
 }
 
+.portal-panel-tools .uiverse-refresh-btn,
+.portal-panel-tools .uiverse-refresh-btn * {
+    -webkit-tap-highlight-color: transparent;
+}
+
+.portal-panel-tools .uiverse-refresh-btn:focus,
+.portal-panel-tools .uiverse-refresh-btn:focus-visible {
+    outline: none;
+    box-shadow: none;
+}
+
 .portal-panel-tools .uiverse-refresh-btn::before,
 .portal-panel-tools .uiverse-refresh-btn::after {
     content: "";
@@ -137,10 +158,6 @@ body.light .portal-panel-header {
         rgba(223, 113, 255, 0.8) 0%,
         rgba(223, 113, 255, 0) 100%
     ), linear-gradient(0deg, #7a5af8, #7a5af8);
-}
-
-.portal-panel-tools .uiverse-refresh-btn:active {
-    transform: scale(0.95);
 }
 
 .portal-panel-tools .uiverse-refresh-btn .uiverse-fold {
@@ -174,7 +191,14 @@ body.light .portal-panel-header {
     pointer-events: none;
 }
 
-.portal-panel-tools .uiverse-refresh-btn:hover .uiverse-fold {
+@media (hover: hover) and (pointer: fine) {
+    .portal-panel-tools .uiverse-refresh-btn:hover .uiverse-fold {
+        margin-top: -1rem;
+        margin-right: -1rem;
+    }
+}
+
+.portal-panel-tools .uiverse-refresh-btn.is-animating .uiverse-fold {
     margin-top: -1rem;
     margin-right: -1rem;
 }
@@ -239,9 +263,16 @@ body.light .portal-panel-header {
     stroke-dasharray: 0 0 0 0;
 }
 
-.portal-panel-tools .uiverse-refresh-btn:hover .uiverse-icon {
+@media (hover: hover) and (pointer: fine) {
+    .portal-panel-tools .uiverse-refresh-btn:hover .uiverse-icon {
+        fill: transparent;
+        animation: uiverse-dasharray 1s linear forwards;
+    }
+}
+
+.portal-panel-tools .uiverse-refresh-btn.is-animating .uiverse-icon {
     fill: transparent;
-    animation: uiverse-dasharray 1s linear forwards, uiverse-filled 0.1s linear forwards 0.95s;
+    animation: uiverse-dasharray 1s linear forwards;
 }
 
 @keyframes uiverse-dasharray {

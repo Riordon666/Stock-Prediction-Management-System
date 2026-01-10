@@ -46,6 +46,8 @@ class TrainConfig:
 
     load_existing_weights: bool = True
 
+    autoregressive_training: bool = False
+
 
 def _now_ts() -> float:
     return float(time.time())
@@ -79,6 +81,19 @@ def _append_jsonl(path: Path, row: Dict) -> None:
     _ensure_dir(path.parent)
     with path.open('a', encoding='utf-8') as f:
         f.write(json.dumps(row, ensure_ascii=False) + '\n')
+
+
+def _load_json(path: Path) -> Optional[Dict]:
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding='utf-8'))
+    except Exception:
+        return None
+
+
+def _save_json(path: Path, data: Dict) -> None:
+    _atomic_write_json(path, data)
 
 
 def _stock_key(market_type: str, code: str) -> str:
@@ -131,6 +146,7 @@ def _get_universe(cfg: TrainConfig) -> List[Tuple[str, str]]:
                 codes = _read_symbols_file(cfg.a_stocks_file)
             else:
                 codes = provider.get_board_stocks(cfg.a_board)
+                codes = sorted([str(x).strip() for x in codes if str(x).strip()])
                 if cfg.a_limit and int(cfg.a_limit) > 0:
                     codes = list(codes)[: int(cfg.a_limit)]
             items.extend((m, c) for c in codes)
@@ -263,6 +279,7 @@ def _paths() -> Dict[str, Path]:
         'history': md / 'history.jsonl',
         'state': md / 'state.json',
         'meta': md / 'meta.json',
+        'lifetime': md / 'lifetime.json',
     }
 
 
@@ -275,6 +292,76 @@ def _load_state(state_path: Path) -> Optional[Dict]:
         return None
 
 
+def _load_lifetime(paths: Dict[str, Path]) -> Dict:
+    data = _load_json(paths['lifetime']) or {}
+    return {
+        'runs': int(data.get('runs', 0)),
+        'trained_total': int(data.get('trained_total', 0)),
+        'cycles_completed': int(data.get('cycles_completed', 0)),
+        'ts': float(data.get('ts', 0.0) or 0.0),
+    }
+
+
+def _save_lifetime(paths: Dict[str, Path], lifetime: Dict) -> None:
+    lifetime['ts'] = _now_ts()
+    _save_json(paths['lifetime'], lifetime)
+
+
+def _as_float(x) -> Optional[float]:
+    try:
+        return float(x)
+    except Exception:
+        return None
+
+
+def _autoregressive_train(
+    model,
+    values_scaled: np.ndarray,
+    lookback: int,
+    epochs: int,
+    x_min: float,
+    x_max: float,
+) -> Tuple[Optional[float], Optional[float], Optional[float]]:
+    values_scaled = np.asarray(values_scaled, dtype=np.float32).reshape(-1)
+    steps = int(len(values_scaled) - int(lookback))
+    if steps <= 0:
+        return None, None, None
+
+    denom = float(x_max - x_min)
+    if abs(denom) < 1e-12:
+        denom = 1.0
+
+    losses: List[float] = []
+    se_scaled: List[float] = []
+    se_real: List[float] = []
+
+    for _ in range(max(1, int(epochs))):
+        window = values_scaled[: int(lookback)].astype(np.float32).copy()
+        for t in range(int(lookback), len(values_scaled)):
+            x = window.reshape((1, int(lookback), 1)).astype(np.float32)
+            y_true_v = float(values_scaled[t])
+            y_true = np.asarray([[y_true_v]], dtype=np.float32)
+
+            pred_v = float(model.predict(x, verbose=0)[0][0])
+            se_scaled.append(float((pred_v - y_true_v) ** 2))
+
+            pred_real = pred_v * denom + float(x_min)
+            true_real = y_true_v * denom + float(x_min)
+            se_real.append(float((pred_real - true_real) ** 2))
+
+            loss = model.train_on_batch(x, y_true)
+            loss_f = _as_float(loss)
+            if loss_f is not None:
+                losses.append(loss_f)
+
+            window = np.concatenate([window[1:], np.asarray([pred_v], dtype=np.float32)], axis=0)
+
+    avg_loss = float(np.mean(losses)) if losses else None
+    mse_scaled = float(np.mean(se_scaled)) if se_scaled else None
+    mse_real = float(np.mean(se_real)) if se_real else None
+    return avg_loss, mse_scaled, mse_real
+
+
 def _save_state(paths: Dict[str, Path], state: Dict) -> None:
     _atomic_write_json(paths['state'], state)
 
@@ -282,6 +369,8 @@ def _save_state(paths: Dict[str, Path], state: Dict) -> None:
 def train_loop(cfg: TrainConfig) -> None:
     paths = _paths()
     _ensure_dir(paths['checkpoints'])
+
+    lifetime = _load_lifetime(paths)
 
     universe = _get_universe(cfg)
     if not universe:
@@ -295,7 +384,7 @@ def train_loop(cfg: TrainConfig) -> None:
         flush=True,
     )
 
-    universe_key = _hash_universe([f"{mt}:{code}" for mt, code in universe])
+    universe_key = _hash_universe(sorted([f"{mt}:{code}" for mt, code in universe]))
 
     state = _load_state(paths['state'])
     if cfg.reset:
@@ -322,11 +411,14 @@ def train_loop(cfg: TrainConfig) -> None:
             )
 
     if state is None:
+        lifetime['runs'] = int(lifetime.get('runs', 0)) + 1
+        _save_lifetime(paths, lifetime)
         state = {
             'universe_key': universe_key,
             'pos': 0,
             'cycle': 0,
             'trained_total': 0,
+            'run_id': int(lifetime.get('runs', 1)),
             'completed_in_cycle': [],
             'ts': _now_ts(),
             'lookback': int(cfg.lookback),
@@ -337,6 +429,7 @@ def train_loop(cfg: TrainConfig) -> None:
                 'dropout': float(cfg.dropout),
                 'learning_rate': float(cfg.learning_rate),
             },
+            'autoregressive_training': bool(getattr(cfg, 'autoregressive_training', False)),
         }
         _atomic_write_json(paths['meta'], {
             'ts': _now_ts(),
@@ -345,6 +438,8 @@ def train_loop(cfg: TrainConfig) -> None:
             'lookback': int(cfg.lookback),
             'total_days': int(cfg.total_days),
             'model': state['model'],
+            'run_id': int(state.get('run_id', 1)),
+            'autoregressive_training': bool(getattr(cfg, 'autoregressive_training', False)),
         })
         _save_state(paths, state)
 
@@ -359,6 +454,8 @@ def train_loop(cfg: TrainConfig) -> None:
             completed = set()
             state['pos'] = 0
             state['cycle'] = int(state.get('cycle', 0)) + 1
+            lifetime['cycles_completed'] = int(lifetime.get('cycles_completed', 0)) + 1
+            _save_lifetime(paths, lifetime)
 
         start_pos = int(state.get('pos', 0))
         found = None
@@ -404,10 +501,8 @@ def train_loop(cfg: TrainConfig) -> None:
 
         close = df['close'].to_numpy(dtype=np.float32)
         series_scaled, x_min, x_max = _scale_minmax(close)
-        x, y = _make_windows(series_scaled, lookback=int(cfg.lookback))
-
         expected_samples = int(cfg.total_days) - int(cfg.lookback)
-        if expected_samples > 0 and int(x.shape[0]) != expected_samples:
+        if expected_samples > 0 and int(len(series_scaled) - int(cfg.lookback)) != expected_samples:
             row = {
                 'ts': _now_ts(),
                 'market_type': market_type,
@@ -415,7 +510,7 @@ def train_loop(cfg: TrainConfig) -> None:
                 'cycle': int(state.get('cycle', 0)),
                 'pos': int(idx),
                 'trained_total': int(state.get('trained_total', 0)),
-                'samples': int(x.shape[0]),
+                'samples': int(len(series_scaled) - int(cfg.lookback)),
                 'expected_samples': int(expected_samples),
                 'status': 'skip_bad_samples',
             }
@@ -439,34 +534,52 @@ def train_loop(cfg: TrainConfig) -> None:
             stock_info=stock_info,
         )
 
-        hist = model.fit(
-            x,
-            y,
-            epochs=int(cfg.epochs_per_stock),
-            batch_size=int(cfg.batch_size),
-            verbose=0,
-            shuffle=True,
-            validation_split=0.2,
-        )
-
         loss = None
         val_loss = None
-        try:
-            loss = float(hist.history.get('loss', [None])[-1])
-            val_loss = float(hist.history.get('val_loss', [None])[-1])
-        except Exception:
-            pass
+        mse_scaled = None
+        mse_real = None
+
+        if bool(getattr(cfg, 'autoregressive_training', False)):
+            loss, mse_scaled, mse_real = _autoregressive_train(
+                model=model,
+                values_scaled=series_scaled,
+                lookback=int(cfg.lookback),
+                epochs=int(cfg.epochs_per_stock),
+                x_min=float(x_min),
+                x_max=float(x_max),
+            )
+        else:
+            x, y = _make_windows(series_scaled, lookback=int(cfg.lookback))
+            hist = model.fit(
+                x,
+                y,
+                epochs=int(cfg.epochs_per_stock),
+                batch_size=int(cfg.batch_size),
+                verbose=0,
+                shuffle=True,
+                validation_split=0.2,
+            )
+
+            try:
+                loss = float(hist.history.get('loss', [None])[-1])
+                val_loss = float(hist.history.get('val_loss', [None])[-1])
+            except Exception:
+                pass
 
         row = {
             'ts': _now_ts(),
             'market_type': market_type,
             'code': code,
+            'run_id': int(state.get('run_id', 1)),
             'cycle': int(state.get('cycle', 0)),
             'pos': int(idx),
             'trained_total': int(state.get('trained_total', 0)) + 1,
-            'samples': int(x.shape[0]),
+            'samples': int(expected_samples),
             'loss': loss,
             'val_loss': val_loss,
+            'mse_scaled': mse_scaled,
+            'mse_real': mse_real,
+            'autoregressive_training': bool(getattr(cfg, 'autoregressive_training', False)),
             'status': 'ok',
         }
         _append_jsonl(paths['history'], row)
@@ -476,6 +589,9 @@ def train_loop(cfg: TrainConfig) -> None:
         state['pos'] = int(idx) + 1
         state['trained_total'] = int(state.get('trained_total', 0)) + 1
         state['ts'] = _now_ts()
+
+        lifetime['trained_total'] = int(lifetime.get('trained_total', 0)) + 1
+        _save_lifetime(paths, lifetime)
 
         model.save_weights(str(paths['latest_weights']))
         _save_state(paths, state)
@@ -487,8 +603,16 @@ def train_loop(cfg: TrainConfig) -> None:
             loss_s = str(loss)
             val_s = str(val_loss)
 
+        try:
+            mse_scaled_s = f"{mse_scaled:.6f}" if mse_scaled is not None else "None"
+            mse_real_s = f"{mse_real:.6f}" if mse_real is not None else "None"
+        except Exception:
+            mse_scaled_s = str(mse_scaled)
+            mse_real_s = str(mse_real)
+
         print(
-            f"[GRU] cycle={state.get('cycle', 0)} {len(completed)}/{len(universe)} {market_type}:{code} status=ok loss={loss_s} val_loss={val_s}",
+            f"[GRU] run={state.get('run_id', 1)} total_cycles={lifetime.get('cycles_completed', 0)} total_trained={lifetime.get('trained_total', 0)} "
+            f"cycle={state.get('cycle', 0)} {len(completed)}/{len(universe)} {market_type}:{code} status=ok loss={loss_s} val_loss={val_s} mse_scaled={mse_scaled_s} mse_real={mse_real_s}",
             flush=True,
         )
 

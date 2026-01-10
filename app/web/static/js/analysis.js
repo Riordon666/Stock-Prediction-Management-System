@@ -197,7 +197,7 @@ function showLoading() {
     $('#analysis-error').hide().text('');
     $('.analysis-submit').prop('disabled', true);
     $('#analysis-result').hide();
-    $('#analysis-loading').show();
+    $('#analysis-loading').css('display', 'flex');
     setLoadingProgress(0);
     setLoadingTarget(0);
     startLoadingProgress();
@@ -207,7 +207,7 @@ function hideLoading() {
     $('.analysis-submit').prop('disabled', false);
     stopProgressPolling();
     stopLoadingProgress();
-    $('#analysis-loading').hide();
+    $('#analysis-loading').css('display', 'none');
 }
 
 let loadingProgress = 0;

@@ -106,12 +106,12 @@
 
                 <form id="analysis-form" class="analysis-form">
                     <div class="analysis-form-row">
-                        <div class="input-group input-group-sm">  <!-- 添加input-group-sm使输入框更小 -->
+                        <div class="input-group input-group-sm field-code">  <!-- 添加input-group-sm使输入框更小 -->
                             <span class="input-group-text">股票代码</span>
                             <input type="text" class="form-control" id="stock-code" placeholder="例: 600519，更多请看下方示例" required>
                         </div>
 
-                        <div class="input-group input-group-sm">  <!-- 添加input-group-sm使下拉框更小 -->
+                        <div class="input-group input-group-sm field-market">  <!-- 添加input-group-sm使下拉框更小 -->
                             <span class="input-group-text">市场</span>
                             <select class="form-select" id="market-type">
                                 <option value="A" selected>A股</option>
@@ -120,7 +120,7 @@
                             </select>
                         </div>
 
-                        <div class="input-group input-group-sm">  <!-- 添加input-group-sm使下拉框更小 -->
+                        <div class="input-group input-group-sm field-horizon">  <!-- 添加input-group-sm使下拉框更小 -->
                             <span class="input-group-text">周期</span>
                             <select class="form-select" id="analysis-period">
                                 <option value="1m">1个月</option>
@@ -129,11 +129,13 @@
                                 <option value="1y" selected>1年</option>
                             </select>
                         </div>
-                    </div>
 
-                    <button type="submit" class="btn btn-primary btn-sm w-100 analysis-submit">  <!-- 使用btn-sm减小按钮尺寸 -->
-                        <i class="fas fa-chart-line"></i> 分析
-                    </button>
+                        <div class="analysis-action">
+                            <button type="submit" class="btn btn-primary btn-sm analysis-submit">
+                                <i class="fas fa-chart-line"></i> 分析
+                            </button>
+                        </div>
+                    </div>
 
                     <div id="analysis-error"></div>
 

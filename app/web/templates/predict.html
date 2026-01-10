@@ -6,6 +6,10 @@
     <title>股票预测 - 股票分析与预测管理系统</title>
     <link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}" />
     <link rel="stylesheet" href="{{ url_for('static', filename='css/common.css') }}" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/predict.css') }}" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" />
+    <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/apexcharts"></script>
 </head>
 
 <body>
@@ -95,11 +99,60 @@
         <section class="section">
             <div class="card">
                 <div class="card-header">
-                    <h2>股票预测</h2>
-                    <div class="hint">占位页面：后续再补预测参数、预测结果、趋势图等。</div>
+                    <h2>智能股票预测</h2>
+                    <div class="hint">预测模型：GRU</div>
                 </div>
                 <div class="card-body">
-                    <div class="placeholder">股票预测页面内容（占位）</div>
+                    <form id="predict-form" class="predict-form">
+                        <div class="predict-form-row">
+                            <div class="input-group input-group-sm field-code">
+                                <span class="input-group-text">股票代码</span>
+                                <input type="text" class="form-control" id="predict-stock-code" placeholder="例: 600519,更多请看股票分析页面示例列表" required>
+                            </div>
+
+                            <div class="input-group input-group-sm field-market">
+                                <span class="input-group-text">市场</span>
+                                <select class="form-select" id="predict-market-type">
+                                    <option value="A" selected>A股</option>
+                                    <option value="HK">港股</option>
+                                    <option value="US">美股</option>
+                                </select>
+                            </div>
+
+                            <div class="input-group input-group-sm field-horizon">
+                                <span class="input-group-text">预测天数</span>
+                                <select class="form-select" id="predict-days">
+                                    <option value="10" selected>10天</option>
+                                    <option value="20">20天</option>
+                                    <option value="30">30天</option>
+                                </select>
+                            </div>
+
+                            <div class="predict-action">
+                                <button type="submit" class="btn btn-primary btn-sm predict-submit">
+                                    <i class="fas fa-wand-magic-sparkles"></i> 预测
+                                </button>
+                            </div>
+                        </div>
+                        <div id="predict-error"></div>
+                    </form>
+
+                    <div id="predict-loading" class="predict-loading" style="display: none;">
+                        <div class="loading-wave">
+                            <div class="loading-bar"></div>
+                            <div class="loading-bar"></div>
+                            <div class="loading-bar"></div>
+                            <div class="loading-bar"></div>
+                        </div>
+                        <div class="predict-loading-text">正在加载模型并预测，请稍候…</div>
+                    </div>
+
+                    <div id="predict-result" style="display: none;">
+                        <div class="predict-summary" id="predict-summary"></div>
+                        <div class="predict-chart-wrap">
+                            <div id="predict-chart" style="height: 420px;"></div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </section>
@@ -137,5 +190,6 @@
     </div>
 
     <script src="{{ url_for('static', filename='js/common.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/predict.js') }}"></script>
 </body>
 </html>
