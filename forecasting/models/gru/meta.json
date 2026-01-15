@@ -1,0 +1,15 @@
+{
+  "ts": 1768477345.551772,
+  "universe_key": "d93b3509ba58697dec657337faf8f185b547455c4c2fba5f8d03cd7e6b45c31b",
+  "universe_size": 1800,
+  "lookback": 30,
+  "total_days": 50,
+  "model": {
+    "units": 50,
+    "layers": 3,
+    "dropout": 0.2,
+    "learning_rate": 0.001
+  },
+  "run_id": 3,
+  "autoregressive_training": true
+}
