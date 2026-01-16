@@ -571,6 +571,21 @@ def _read_h5_layer_names(weights_path: Path) -> list[str]:
         import h5py  # type: ignore
 
         with h5py.File(str(weights_path), 'r') as f:
+            try:
+                raw_attr = f.attrs.get('layer_names')
+                if raw_attr is not None:
+                    out0: list[str] = []
+                    for x in raw_attr:
+                        if isinstance(x, bytes):
+                            out0.append(x.decode('utf-8', errors='ignore'))
+                        else:
+                            out0.append(str(x))
+                    out0 = [s for s in out0 if s]
+                    if out0:
+                        return out0
+            except Exception:
+                pass
+
             if 'layer_names' in f:
                 raw = f['layer_names'][()]
                 out: list[str] = []
@@ -590,60 +605,146 @@ def _read_h5_layer_names(weights_path: Path) -> list[str]:
                     else:
                         out2.append(str(x))
                 return [s for s in out2 if s]
+
+            if 'model_weights' in f:
+                try:
+                    mw = f['model_weights']
+                    raw_attr2 = mw.attrs.get('layer_names')
+                    if raw_attr2 is not None:
+                        out3: list[str] = []
+                        for x in raw_attr2:
+                            if isinstance(x, bytes):
+                                out3.append(x.decode('utf-8', errors='ignore'))
+                            else:
+                                out3.append(str(x))
+                        out3 = [s for s in out3 if s]
+                        if out3:
+                            return out3
+                except Exception:
+                    pass
+
+                try:
+                    mw_keys = [str(k) for k in f['model_weights'].keys()]
+                    return [s for s in mw_keys if s]
+                except Exception:
+                    pass
     except Exception:
+        logger.warning('read h5 layer_names failed (missing h5py or invalid file): %s', weights_path)
         return []
     return []
 
 
-def _build_gru_regression_model_named(
-    lookback: int,
-    units: int,
-    layers: int,
-    dropout: float,
-    learning_rate: float,
-    gru_layer_names: list[str],
-    dense_layer_name: str,
-):
-    import tensorflow as tf
-
-    model = tf.keras.Sequential()
-    for i in range(int(layers)):
-        return_sequences = i < int(layers) - 1
-        name = gru_layer_names[i] if i < len(gru_layer_names) else None
-        if i == 0:
-            model.add(
-                tf.keras.layers.GRU(
-                    units=int(units),
-                    return_sequences=return_sequences,
-                    input_shape=(int(lookback), 1),
-                    name=name,
-                )
-            )
-        else:
-            model.add(
-                tf.keras.layers.GRU(
-                    units=int(units),
-                    return_sequences=return_sequences,
-                    name=name,
-                )
-            )
-        if dropout and float(dropout) > 0:
-            model.add(tf.keras.layers.Dropout(float(dropout)))
-
-    model.add(tf.keras.layers.Dense(1, activation='linear', name=dense_layer_name or None))
-    opt = tf.keras.optimizers.Adam(learning_rate=float(learning_rate))
-    model.compile(optimizer=opt, loss='mse')
-    return model
-
-
-def _load_gru_meta() -> Dict[str, Any]:
-    p = _gru_paths()['meta']
-    if not p.exists():
-        return {}
+def _manual_load_gru_weights_from_h5(model: Any, weights_path: Path) -> bool:
     try:
-        return json.loads(p.read_text(encoding='utf-8'))
+        import h5py  # type: ignore
+        import tensorflow as tf
     except Exception:
-        return {}
+        logger.warning('manual gru load unavailable: missing h5py/tensorflow (weights=%s)', weights_path)
+        return False
+
+    logger.info('manual gru load: attempting to assign weights from h5 (weights=%s)', weights_path)
+
+    def _iter_datasets(g, prefix: str):
+        out = []
+        for k, v in g.items():
+            p = f'{prefix}/{k}' if prefix else str(k)
+            try:
+                if hasattr(v, 'items'):
+                    out.extend(_iter_datasets(v, p))
+                else:
+                    out.append((p, v[()]))
+            except Exception:
+                continue
+        return out
+
+    try:
+        with h5py.File(str(weights_path), 'r') as f:
+            pairs = _iter_datasets(f, '')
+    except Exception:
+        return False
+
+    groups: dict[str, dict[str, Any]] = {}
+    for path, arr in pairs:
+        p = '/' + str(path).lstrip('/')
+        parts = [x for x in p.split('/') if x]
+        if not parts:
+            continue
+
+        group = ''
+        if 'model_weights' in parts:
+            i = parts.index('model_weights')
+            if i + 1 < len(parts):
+                group = parts[i + 1]
+        else:
+            group = parts[0]
+        if not group:
+            continue
+
+        d = groups.setdefault(group, {})
+        if '/gru_cell/' in p:
+            if p.endswith('kernel:0'):
+                d['gru_kernel'] = arr
+            elif p.endswith('recurrent_kernel:0'):
+                d['gru_recurrent_kernel'] = arr
+            elif p.endswith('bias:0'):
+                d['gru_bias'] = arr
+        else:
+            if group.startswith('dense'):
+                if p.endswith('kernel:0'):
+                    d['dense_kernel'] = arr
+                elif p.endswith('bias:0'):
+                    d['dense_bias'] = arr
+
+    def _name_key(prefix: str, name: str):
+        if name == prefix:
+            return (0, 0)
+        m = re.match(rf'^{re.escape(prefix)}_(\d+)$', name)
+        if m:
+            return (0, int(m.group(1)) + 1)
+        return (1, name)
+
+    gru_groups = [
+        n for n, v in groups.items()
+        if n.startswith('gru') and all(k in v for k in ('gru_kernel', 'gru_recurrent_kernel', 'gru_bias'))
+    ]
+    dense_groups = [
+        n for n, v in groups.items()
+        if n.startswith('dense') and all(k in v for k in ('dense_kernel', 'dense_bias'))
+    ]
+
+    gru_groups.sort(key=lambda n: _name_key('gru', n))
+    dense_groups.sort(key=lambda n: _name_key('dense', n))
+
+    try:
+        logger.info('manual gru load: discovered groups gru=%s dense=%s', gru_groups[:10], dense_groups[:10])
+    except Exception:
+        pass
+
+    try:
+        gru_layers = [l for l in getattr(model, 'layers', []) if isinstance(l, tf.keras.layers.GRU)]
+        dense_layers = [l for l in getattr(model, 'layers', []) if isinstance(l, tf.keras.layers.Dense)]
+        if not gru_layers or not dense_layers:
+            return False
+        if len(gru_groups) < len(gru_layers) or not dense_groups:
+            logger.warning('manual gru load: insufficient groups in h5 (gru_groups=%s dense_groups=%s)', gru_groups, dense_groups)
+            return False
+
+        for i, layer in enumerate(gru_layers):
+            gname = gru_groups[i]
+            v = groups[gname]
+            layer.cell.kernel.assign(np.asarray(v['gru_kernel']))
+            layer.cell.recurrent_kernel.assign(np.asarray(v['gru_recurrent_kernel']))
+            layer.cell.bias.assign(np.asarray(v['gru_bias']))
+
+        d0 = groups[dense_groups[0]]
+        dense_layers[-1].kernel.assign(np.asarray(d0['dense_kernel']))
+        dense_layers[-1].bias.assign(np.asarray(d0['dense_bias']))
+
+        logger.info('manual gru load: assigned weights from h5 gru_groups=%s dense_group=%s', gru_groups[: len(gru_layers)], dense_groups[0])
+        return True
+    except Exception as e:
+        logger.warning('manual gru load failed: %s', e)
+        return False
 
 
 def _load_gru_model() -> Any:
@@ -693,8 +794,22 @@ def _load_gru_model() -> Any:
     gru_names = [n for n in h5_layer_names if n.startswith('gru')]
     dense_names = [n for n in h5_layer_names if n.startswith('dense')]
 
+    try:
+        logger.info(
+            'gru weights h5 layer_names=%s gru_candidates=%s dense_candidates=%s',
+            h5_layer_names[:20],
+            gru_names[:10],
+            dense_names[:10],
+        )
+    except Exception:
+        pass
+
     model = None
     if len(gru_names) >= int(layers) and dense_names:
+        try:
+            logger.info('gru weights: using named model build for loading')
+        except Exception:
+            pass
         model = _build_gru_regression_model_named(
             lookback=lookback,
             units=units,
@@ -705,6 +820,10 @@ def _load_gru_model() -> Any:
             dense_layer_name=dense_names[0],
         )
     else:
+        try:
+            logger.info('gru weights: using fallback model build for loading')
+        except Exception:
+            pass
         from forecasting.models.gru.model import build_gru_regression_model
 
         model = build_gru_regression_model(
@@ -749,6 +868,14 @@ def _load_gru_model() -> Any:
     try:
         model.load_weights(str(weights))
     except Exception as e:
+        try:
+            if _manual_load_gru_weights_from_h5(model, weights):
+                _gru_model_cache['model'] = model
+                _gru_model_cache['meta'] = meta
+                _gru_model_cache['mtime'] = mtime
+                return model
+        except Exception:
+            pass
         raise ValueError(
             'GRU模型权重加载失败：权重文件可能已损坏/格式不匹配。'
             '请在服务器上重新训练一次 GRU，或将本地训练产物 forecasting/models/gru/checkpoints/latest.weights.h5 '
