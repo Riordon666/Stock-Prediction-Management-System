@@ -619,6 +619,14 @@ def _load_gru_model() -> Any:
         dropout=dropout,
         learning_rate=learning_rate,
     )
+
+    try:
+        model.build((None, int(lookback), 1))
+    except Exception:
+        try:
+            _ = model.predict(np.zeros((1, int(lookback), 1), dtype=np.float32), verbose=0)
+        except Exception:
+            pass
     try:
         model.load_weights(str(weights))
     except Exception as e:
@@ -633,66 +641,6 @@ def _load_gru_model() -> Any:
     _gru_model_cache['meta'] = meta
     _gru_model_cache['mtime'] = mtime
     return model
-
-
-def _minmax_scale_1d(values: np.ndarray) -> Dict[str, Any]:
-    x = np.asarray(values, dtype=np.float32).reshape(-1)
-    x_min = float(np.min(x))
-    x_max = float(np.max(x))
-    if x_max - x_min < 1e-12:
-        scaled = np.zeros_like(x, dtype=np.float32)
-    else:
-        scaled = ((x - x_min) / (x_max - x_min)).astype(np.float32)
-    return {'scaled': scaled, 'x_min': x_min, 'x_max': x_max}
-
-
-def _minmax_inv(v: float, x_min: float, x_max: float) -> float:
-    if abs(float(x_max) - float(x_min)) < 1e-12:
-        return float(x_min)
-    return float(v) * (float(x_max) - float(x_min)) + float(x_min)
-
-
-def _next_trading_days(start_date: datetime, n: int) -> list[str]:
-    out: list[str] = []
-    d = start_date
-    while len(out) < int(n):
-        d = d + timedelta(days=1)
-        if d.weekday() >= 5:
-            continue
-        out.append(d.strftime('%Y-%m-%d'))
-    return out
-
-
-def _fetch_last_close_n(stock_code: str, market_type: str, days: int) -> pd.DataFrame:
-    provider = get_data_provider()
-
-    end = datetime.now().date()
-    start = end - timedelta(days=int(days) * 4)
-
-    df = provider.get_stock_history(
-        code=stock_code,
-        start_date=start.strftime('%Y%m%d'),
-        end_date=end.strftime('%Y%m%d'),
-        adjust='qfq',
-        market_type=market_type,
-    )
-    if df is None or df.empty:
-        return pd.DataFrame()
-
-    df = df.copy()
-    if 'date' not in df.columns and '日期' in df.columns:
-        df['date'] = df['日期']
-
-    close_col = 'close' if 'close' in df.columns else ('收盘' if '收盘' in df.columns else None)
-    if close_col is None:
-        return pd.DataFrame()
-
-    df['date'] = pd.to_datetime(df['date'], errors='coerce')
-    df['close'] = pd.to_numeric(df[close_col], errors='coerce')
-    df = df.dropna(subset=['date', 'close']).sort_values('date')
-
-    df = df.tail(int(days)).reset_index(drop=True)
-    return df[['date', 'close']]
 
 
 @app.route('/api/predict_gru')
@@ -765,7 +713,7 @@ def api_predict_gru():
     except FileNotFoundError:
         return jsonify({'success': False, 'error': '未找到GRU模型权重文件，请先训练模型'}), 500
     except ValueError as e:
-        # weights corrupted / mismatch
+        logger.warning('api_predict_gru model/weights error: %s', e)
         return jsonify({'success': False, 'error': str(e)}), 500
     except Exception as e:
         logger.exception('api_predict_gru failed')
