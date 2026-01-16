@@ -566,6 +566,62 @@ def _gru_paths() -> Dict[str, Path]:
     }
 
 
+def _load_gru_meta() -> Dict[str, Any]:
+    p = _gru_paths()['meta']
+    if not p.exists():
+        return {}
+    try:
+        return json.loads(p.read_text(encoding='utf-8'))
+    except Exception:
+        return {}
+
+
+def _build_gru_regression_model_named(
+    lookback: int,
+    units: int,
+    layers: int,
+    dropout: float,
+    learning_rate: float,
+    gru_layer_names: list[str],
+    dense_layer_name: str,
+):
+    import tensorflow as tf
+
+    if int(lookback) <= 0:
+        raise ValueError('lookback must be > 0')
+    if int(layers) <= 0:
+        raise ValueError('layers must be > 0')
+
+    model = tf.keras.Sequential()
+    for i in range(int(layers)):
+        return_sequences = i < int(layers) - 1
+        name = gru_layer_names[i] if i < len(gru_layer_names) else None
+        if i == 0:
+            model.add(
+                tf.keras.layers.GRU(
+                    units=int(units),
+                    return_sequences=return_sequences,
+                    input_shape=(int(lookback), 1),
+                    name=name,
+                )
+            )
+        else:
+            model.add(
+                tf.keras.layers.GRU(
+                    units=int(units),
+                    return_sequences=return_sequences,
+                    name=name,
+                )
+            )
+        if dropout and float(dropout) > 0:
+            model.add(tf.keras.layers.Dropout(float(dropout)))
+
+    model.add(tf.keras.layers.Dense(1, activation='linear', name=(dense_layer_name or None)))
+    opt = tf.keras.optimizers.Adam(learning_rate=float(learning_rate))
+    model.compile(optimizer=opt, loss='mse')
+    return model
+
+
 def _read_h5_layer_names(weights_path: Path) -> list[str]:
     try:
         import h5py  # type: ignore
