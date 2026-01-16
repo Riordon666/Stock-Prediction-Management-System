@@ -479,6 +479,29 @@ body.light .site-footer {
     letter-spacing: 0.15px;
 }
 
+.site-footer a.copyright {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    color: var(--muted);
+    text-decoration: none;
+}
+
+.site-footer a.copyright img {
+    width: 16px;
+    height: 16px;
+    display: block;
+    object-fit: contain;
+}
+
+@media (max-width: 520px) {
+    .site-footer a.copyright img {
+        width: 14px;
+        height: 14px;
+    }
+}
+
 .footer-links {
     display: flex;
     align-items: center;

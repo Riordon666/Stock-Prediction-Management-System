@@ -140,6 +140,64 @@ def _is_important_news(item: Dict[str, Any]) -> bool:
     return any(k in text for k in keywords)
 
 
+def _normalize_hotspot_url(url: Any) -> str:
+    u = '' if url is None else str(url)
+    u = u.strip()
+    if not u:
+        return ''
+    if u.startswith('//'):
+        return 'https:' + u
+    if u.startswith('/'):
+        return 'https://tophub.today' + u
+    if (not u.startswith('http://')) and (not u.startswith('https://')):
+        if re.match(r'^[A-Za-z0-9.-]+\.[A-Za-z]{2,}(/|$)', u):
+            return 'https://' + u
+    return u
+
+
+def _is_hotspot_image_url(url: str) -> bool:
+    u = (url or '').strip().lower()
+    if not u:
+        return False
+    u = re.split(r'[?#]', u)[0]
+    return u.endswith(('.png', '.jpg', '.jpeg', '.webp', '.gif', '.svg'))
+
+
+def _sanitize_hotspot_title(title: Any) -> str:
+    t = '' if title is None else str(title)
+    t = t.strip()
+    if not t:
+        return ''
+
+    t = re.sub(r'^\s*!\[', '', t)
+    t = re.sub(r'\]\s*$', '', t)
+    t = re.sub(r'^\s*Image\s*\d+\s*[:：]\s*', '', t, flags=re.IGNORECASE)
+    t = re.sub(r'^\s*Image\s*\d+\s*$', '', t, flags=re.IGNORECASE)
+    t = t.strip(' \t\r\n-—–|:：')
+    return t.strip()
+
+
+def _clean_hotspot_items(items: Any, limit: int) -> list[Dict[str, str]]:
+    out: list[Dict[str, str]] = []
+    if not isinstance(items, list):
+        return out
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        title = _sanitize_hotspot_title(it.get('title'))
+        link = _normalize_hotspot_url(it.get('url'))
+        extra = it.get('extra')
+        extra_s = '' if extra is None else str(extra).strip()
+        if not title or not link:
+            continue
+        if _is_hotspot_image_url(link):
+            continue
+        out.append({'title': title, 'url': link, 'extra': extra_s})
+        if len(out) >= int(limit):
+            break
+    return out
+
+
 def _fetch_tophubdata_hotspots(limit: int) -> Dict[str, Any]:
     access_key = (os.getenv('TOPHUBDATA_ACCESS_KEY') or '').strip()
     if not access_key:
@@ -151,6 +209,7 @@ def _fetch_tophubdata_hotspots(limit: int) -> Dict[str, Any]:
         headers={
             'Authorization': access_key,
             'Accept': 'application/json,text/plain,*/*',
+            'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
             'User-Agent': 'Mozilla/5.0',
         },
         method='GET',
@@ -160,18 +219,28 @@ def _fetch_tophubdata_hotspots(limit: int) -> Dict[str, Any]:
         with urllib.request.urlopen(req, timeout=8) as resp:
             raw = resp.read().decode('utf-8', errors='ignore')
         payload = json.loads(raw) if raw else {}
-        data = (payload.get('data') or {}) if isinstance(payload, dict) else {}
-        items = data.get('items') or []
+
+        data: Any = (payload.get('data') if isinstance(payload, dict) else None)
+        items: Any = []
+        if isinstance(data, dict):
+            items = data.get('items') or data.get('data') or []
+        elif isinstance(data, list):
+            items = data
+        else:
+            items = payload.get('items') if isinstance(payload, dict) else []
 
         out = []
-        for it in items:
+        for it in (items or []):
             if not isinstance(it, dict):
                 continue
-            title = str(it.get('title') or '').strip()
-            link = str(it.get('url') or '').strip()
+            title = _sanitize_hotspot_title(it.get('title'))
+            link = _normalize_hotspot_url(it.get('url'))
+
             extra = it.get('extra')
             extra_s = '' if extra is None else str(extra).strip()
             if not title or not link:
+                continue
+            if _is_hotspot_image_url(link):
                 continue
             out.append({'title': title, 'url': link, 'extra': extra_s})
             if len(out) >= limit:
@@ -184,36 +253,59 @@ def _fetch_tophubdata_hotspots(limit: int) -> Dict[str, Any]:
 
 
 def _fetch_tophub_today_hotspots(limit: int) -> Dict[str, Any]:
-    url = 'https://r.jina.ai/http://tophub.today/n/1VdJkxkeLQ'
-    req = urllib.request.Request(
-        url,
-        headers={
-            'Accept': 'text/plain,text/markdown,*/*',
-            'User-Agent': 'Mozilla/5.0',
-        },
-        method='GET',
-    )
-
     try:
-        with urllib.request.urlopen(req, timeout=8) as resp:
-            raw = resp.read().decode('utf-8', errors='ignore')
+        urls = [
+            'https://r.jina.ai/https://tophub.today/n/1VdJkxkeLQ',
+            'https://r.jina.ai/http://tophub.today/n/1VdJkxkeLQ',
+            'https://r.jina.ai/https://www.tophub.today/n/1VdJkxkeLQ',
+            'https://r.jina.ai/http://www.tophub.today/n/1VdJkxkeLQ',
+        ]
+
+        raw = ''
+        for url in urls:
+            req = urllib.request.Request(
+                url,
+                headers={
+                    'Accept': 'text/plain,text/markdown,*/*',
+                    'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+                    'User-Agent': 'Mozilla/5.0',
+                },
+                method='GET',
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    raw = resp.read().decode('utf-8', errors='ignore')
+                if raw:
+                    break
+            except Exception:
+                continue
 
         if not raw:
             return {'items': [], 'source': ''}
 
         out = []
         for line in raw.splitlines():
-            m = re.match(r'^\s*\d+\.\s*\[(.*?)\]\((https?://[^\)]+)\)', line)
-            if not m:
+            if not line:
                 continue
-            title = (m.group(1) or '').strip()
-            link = (m.group(2) or '').strip()
 
-            if not title or not link:
+            m = re.search(r'\[(.*?)\]\(([^\s\)]+)\)', line)
+            if m:
+                title = _sanitize_hotspot_title(m.group(1))
+                link = _normalize_hotspot_url(m.group(2))
+                if title and link and (not _is_hotspot_image_url(link)):
+                    out.append({'title': title, 'url': link, 'extra': ''})
+                    if len(out) >= limit:
+                        break
                 continue
-            out.append({'title': title, 'url': link, 'extra': ''})
-            if len(out) >= limit:
-                break
+
+            m2 = re.search(r'<a\s+[^>]*href="([^"]+)"[^>]*>([^<]+)</a>', line)
+            if m2:
+                link = _normalize_hotspot_url(m2.group(1))
+                title = _sanitize_hotspot_title(m2.group(2))
+                if title and link and (not _is_hotspot_image_url(link)):
+                    out.append({'title': title, 'url': link, 'extra': ''})
+                    if len(out) >= limit:
+                        break
 
         return {'items': out, 'source': 'tophub_today'}
     except Exception as e:
@@ -288,6 +380,11 @@ def api_hotspots():
         cached_items = _hotspot_cache.get('items')
         cached_source = _hotspot_cache.get('source') or ''
 
+        cleaned_cached = _clean_hotspot_items(cached_items, limit)
+        if cleaned_cached and cleaned_cached != cached_items:
+            _hotspot_cache['items'] = cleaned_cached
+            cached_items = cleaned_cached
+
         if isinstance(cached_items, list) and cached_items and (now - cached_ts < 300):
             return jsonify({
                 'success': True,
@@ -309,6 +406,8 @@ def api_hotspots():
 
     items = data.get('items') or []
     source = data.get('source') or ''
+
+    items = _clean_hotspot_items(items, limit)
 
     with _hotspot_lock:
         cached_items = _hotspot_cache.get('items')
