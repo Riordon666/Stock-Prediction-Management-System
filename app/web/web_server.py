@@ -210,6 +210,7 @@ def _fetch_tophubdata_hotspots(limit: int) -> Dict[str, Any]:
             'Authorization': access_key,
             'Accept': 'application/json,text/plain,*/*',
             'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+            'Accept-Encoding': 'identity',
             'User-Agent': 'Mozilla/5.0',
         },
         method='GET',
@@ -259,53 +260,76 @@ def _fetch_tophub_today_hotspots(limit: int) -> Dict[str, Any]:
             'https://r.jina.ai/http://tophub.today/n/1VdJkxkeLQ',
             'https://r.jina.ai/https://www.tophub.today/n/1VdJkxkeLQ',
             'https://r.jina.ai/http://www.tophub.today/n/1VdJkxkeLQ',
+            'https://tophub.today/n/1VdJkxkeLQ',
         ]
 
         raw = ''
+        last_err: str = ''
         for url in urls:
             req = urllib.request.Request(
                 url,
                 headers={
                     'Accept': 'text/plain,text/markdown,*/*',
                     'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+                    'Accept-Encoding': 'identity',
                     'User-Agent': 'Mozilla/5.0',
+                    'Referer': 'https://tophub.today/',
                 },
                 method='GET',
             )
+
             try:
                 with urllib.request.urlopen(req, timeout=10) as resp:
                     raw = resp.read().decode('utf-8', errors='ignore')
                 if raw:
                     break
-            except Exception:
+            except Exception as e:
+                last_err = f"{type(e).__name__}: {e}"
+                logger.warning('fetch tophub.today via jina failed url=%s err=%s', url, last_err)
                 continue
 
         if not raw:
+            if last_err:
+                logger.warning('fetch tophub.today all urls failed last_err=%s', last_err)
             return {'items': [], 'source': ''}
 
-        out = []
-        for line in raw.splitlines():
-            if not line:
-                continue
+        out: list[Dict[str, str]] = []
+        seen = set()
 
-            m = re.search(r'\[(.*?)\]\(([^\s\)]+)\)', line)
-            if m:
-                title = _sanitize_hotspot_title(m.group(1))
-                link = _normalize_hotspot_url(m.group(2))
-                if title and link and (not _is_hotspot_image_url(link)):
-                    out.append({'title': title, 'url': link, 'extra': ''})
-                    if len(out) >= limit:
-                        break
+        # Markdown links
+        for m in re.finditer(r'\[(?P<title>[^\]]+?)\]\((?P<link>[^\)\s]+)\)', raw):
+            title = _sanitize_hotspot_title(m.group('title'))
+            link = _normalize_hotspot_url(m.group('link'))
+            if not title or not link or _is_hotspot_image_url(link):
                 continue
+            key = (title, link)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append({'title': title, 'url': link, 'extra': ''})
+            if len(out) >= limit:
+                break
 
-            m2 = re.search(r'<a\s+[^>]*href="([^"]+)"[^>]*>([^<]+)</a>', line)
-            if m2:
-                link = _normalize_hotspot_url(m2.group(1))
-                title = _sanitize_hotspot_title(m2.group(2))
-                if title and link and (not _is_hotspot_image_url(link)):
-                    out.append({'title': title, 'url': link, 'extra': ''})
-                    if len(out) >= limit:
-                        break
+        # HTML anchors (title can contain nested tags)
+        if len(out) < limit:
+            for m2 in re.finditer(r'<a\s+[^>]*href="(?P<link>[^"]+)"[^>]*>(?P<title>.*?)</a>', raw, flags=re.IGNORECASE | re.DOTALL):
+                link = _normalize_hotspot_url(m2.group('link'))
+                title_html = m2.group('title')
+                title_text = re.sub(r'<[^>]+>', ' ', title_html)
+                title = _sanitize_hotspot_title(title_text)
+                if not title or not link or _is_hotspot_image_url(link):
+                    continue
+                key = (title, link)
+                if key in seen:
+                    continue
+                seen.add(key)
+                out.append({'title': title, 'url': link, 'extra': ''})
+                if len(out) >= limit:
+                    break
+
+        if not out:
+            sample = raw[:600].replace('\r', ' ').replace('\n', ' ')
+            logger.warning('tophub.today parse yielded 0 items. raw_sample=%s', sample)
 
         return {'items': out, 'source': 'tophub_today'}
     except Exception as e:
@@ -522,6 +546,13 @@ def _load_gru_model() -> Any:
     if not weights.exists():
         raise FileNotFoundError(str(weights))
 
+    try:
+        size = int(weights.stat().st_size)
+    except Exception:
+        size = 0
+    if size <= 0:
+        raise ValueError('GRU模型权重文件为空，请先训练模型或重新上传权重文件')
+
     mtime = float(weights.stat().st_mtime)
     if _gru_model_cache.get('model') is not None and float(_gru_model_cache.get('mtime') or 0.0) >= mtime:
         return _gru_model_cache.get('model')
@@ -544,7 +575,15 @@ def _load_gru_model() -> Any:
         dropout=dropout,
         learning_rate=learning_rate,
     )
-    model.load_weights(str(weights))
+    try:
+        model.load_weights(str(weights))
+    except Exception as e:
+        raise ValueError(
+            'GRU模型权重加载失败：权重文件可能已损坏/格式不匹配。'
+            '请在服务器上重新训练一次 GRU，或将本地训练产物 forecasting/models/gru/checkpoints/latest.weights.h5 '
+            '拷贝到服务器同路径后重启服务。'
+            f' (detail={type(e).__name__}: {e})'
+        )
 
     _gru_model_cache['model'] = model
     _gru_model_cache['meta'] = meta
@@ -681,6 +720,9 @@ def api_predict_gru():
         })
     except FileNotFoundError:
         return jsonify({'success': False, 'error': '未找到GRU模型权重文件，请先训练模型'}), 500
+    except ValueError as e:
+        # weights corrupted / mismatch
+        return jsonify({'success': False, 'error': str(e)}), 500
     except Exception as e:
         logger.exception('api_predict_gru failed')
         return jsonify({'success': False, 'error': str(e)}), 500
