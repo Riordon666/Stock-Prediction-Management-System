@@ -566,6 +566,76 @@ def _gru_paths() -> Dict[str, Path]:
     }
 
 
+def _read_h5_layer_names(weights_path: Path) -> list[str]:
+    try:
+        import h5py  # type: ignore
+
+        with h5py.File(str(weights_path), 'r') as f:
+            if 'layer_names' in f:
+                raw = f['layer_names'][()]
+                out: list[str] = []
+                for x in raw:
+                    if isinstance(x, bytes):
+                        out.append(x.decode('utf-8', errors='ignore'))
+                    else:
+                        out.append(str(x))
+                return [s for s in out if s]
+
+            if 'model_weights' in f and 'layer_names' in f['model_weights']:
+                raw = f['model_weights']['layer_names'][()]
+                out2: list[str] = []
+                for x in raw:
+                    if isinstance(x, bytes):
+                        out2.append(x.decode('utf-8', errors='ignore'))
+                    else:
+                        out2.append(str(x))
+                return [s for s in out2 if s]
+    except Exception:
+        return []
+    return []
+
+
+def _build_gru_regression_model_named(
+    lookback: int,
+    units: int,
+    layers: int,
+    dropout: float,
+    learning_rate: float,
+    gru_layer_names: list[str],
+    dense_layer_name: str,
+):
+    import tensorflow as tf
+
+    model = tf.keras.Sequential()
+    for i in range(int(layers)):
+        return_sequences = i < int(layers) - 1
+        name = gru_layer_names[i] if i < len(gru_layer_names) else None
+        if i == 0:
+            model.add(
+                tf.keras.layers.GRU(
+                    units=int(units),
+                    return_sequences=return_sequences,
+                    input_shape=(int(lookback), 1),
+                    name=name,
+                )
+            )
+        else:
+            model.add(
+                tf.keras.layers.GRU(
+                    units=int(units),
+                    return_sequences=return_sequences,
+                    name=name,
+                )
+            )
+        if dropout and float(dropout) > 0:
+            model.add(tf.keras.layers.Dropout(float(dropout)))
+
+    model.add(tf.keras.layers.Dense(1, activation='linear', name=dense_layer_name or None))
+    opt = tf.keras.optimizers.Adam(learning_rate=float(learning_rate))
+    model.compile(optimizer=opt, loss='mse')
+    return model
+
+
 def _load_gru_meta() -> Dict[str, Any]:
     p = _gru_paths()['meta']
     if not p.exists():
@@ -586,6 +656,7 @@ def _load_gru_model() -> Any:
         size = int(weights.stat().st_size)
     except Exception:
         size = 0
+
     if size <= 0:
         raise ValueError('GRU模型权重文件为空，请先训练模型或重新上传权重文件')
 
@@ -603,6 +674,14 @@ def _load_gru_model() -> Any:
 
     meta = _load_gru_meta()
     lookback = int(meta.get('lookback') or 30)
+
+    try:
+        import tensorflow as tf
+
+        tf.keras.backend.clear_session()
+    except Exception:
+        pass
+
     model_cfg = meta.get('model') or {}
 
     units = int(model_cfg.get('units') or 50)
@@ -610,15 +689,31 @@ def _load_gru_model() -> Any:
     dropout = float(model_cfg.get('dropout') or 0.2)
     learning_rate = float(model_cfg.get('learning_rate') or 0.001)
 
-    from forecasting.models.gru.model import build_gru_regression_model
+    h5_layer_names = _read_h5_layer_names(weights)
+    gru_names = [n for n in h5_layer_names if n.startswith('gru')]
+    dense_names = [n for n in h5_layer_names if n.startswith('dense')]
 
-    model = build_gru_regression_model(
-        lookback=lookback,
-        units=units,
-        layers=layers,
-        dropout=dropout,
-        learning_rate=learning_rate,
-    )
+    model = None
+    if len(gru_names) >= int(layers) and dense_names:
+        model = _build_gru_regression_model_named(
+            lookback=lookback,
+            units=units,
+            layers=layers,
+            dropout=dropout,
+            learning_rate=learning_rate,
+            gru_layer_names=gru_names[: int(layers)],
+            dense_layer_name=dense_names[0],
+        )
+    else:
+        from forecasting.models.gru.model import build_gru_regression_model
+
+        model = build_gru_regression_model(
+            lookback=lookback,
+            units=units,
+            layers=layers,
+            dropout=dropout,
+            learning_rate=learning_rate,
+        )
 
     warmup_x = np.zeros((1, int(lookback), 1), dtype=np.float32)
     try:
@@ -630,6 +725,24 @@ def _load_gru_model() -> Any:
         _ = model(warmup_x, training=False)
     except Exception as e:
         logger.warning('gru model warmup forward failed: %s', e)
+
+    try:
+        import tensorflow as tf
+
+        gru_layers = [l for l in getattr(model, 'layers', []) if isinstance(l, tf.keras.layers.GRU)]
+        if gru_layers:
+            g0 = gru_layers[0]
+            cell_w = getattr(getattr(g0, 'cell', None), 'weights', None)
+            cell_w_len = len(cell_w) if cell_w is not None else -1
+            logger.info(
+                'gru warmup done: model_weights=%s gru_layer=%s gru_weights=%s cell_weights=%s',
+                len(getattr(model, 'weights', []) or []),
+                getattr(g0, 'name', ''),
+                len(getattr(g0, 'weights', []) or []),
+                cell_w_len,
+            )
+    except Exception:
+        pass
 
     if not getattr(model, 'weights', None):
         raise ValueError('GRU模型初始化失败：模型变量未创建，无法加载权重（可能是TensorFlow/Keras版本不兼容）')
