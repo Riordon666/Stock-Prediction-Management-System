@@ -766,15 +766,50 @@ def _manual_load_gru_weights_from_h5(model: Any, weights_path: Path) -> bool:
         except Exception:
             pass
 
-    def _name_key(prefix: str, name: str):
-        if name == prefix:
-            return (0, 0)
-        m = re.match(rf'^{re.escape(prefix)}_(\d+)$', name)
-        if m:
-            return (0, int(m.group(1)) + 1)
-        return (1, name)
+        # If still empty, try TF checkpoint-style H5 layout:
+        # _layer_checkpoint_dependencies\\gru\\cell/vars/0..2
+        # _layer_checkpoint_dependencies\\dense/vars/0..1
+        gru_ckpt: dict[str, dict[int, Any]] = {}
+        dense_ckpt: dict[int, Any] = {}
+        for path, arr in pairs:
+            s = str(path)
 
+            md0 = re.match(r'^_layer_checkpoint_dependencies\\dense/vars/(\d+)$', s)
+            if md0:
+                try:
+                    dense_ckpt[int(md0.group(1))] = arr
+                except Exception:
+                    pass
+                continue
+
+            mg0 = re.match(r'^_layer_checkpoint_dependencies\\(gru(?:_\d+)?)\\cell/vars/(\d+)$', s)
+            if mg0:
+                layer_name = mg0.group(1)
+                try:
+                    idx = int(mg0.group(2))
+                except Exception:
+                    continue
+                d = gru_ckpt.setdefault(layer_name, {})
+                d[idx] = arr
+
+        for layer_name, d in gru_ckpt.items():
+            if all(i in d for i in (0, 1, 2)):
+                gru_blocks[f'ckpt:{layer_name}'] = {
+                    'kernel': d[0],
+                    'recurrent_kernel': d[1],
+                    'bias': d[2],
+                }
+        if all(i in dense_ckpt for i in (0, 1)):
+            dense_blocks['ckpt:dense'] = {
+                'kernel': dense_ckpt[0],
+                'bias': dense_ckpt[1],
+            }
+
+    # Build candidate items from discovered blocks (traditional Keras-ish layouts)
     def _extract_layer_name(block_prefix: str) -> str:
+        s0 = str(block_prefix)
+        if s0.startswith('ckpt:'):
+            return s0.split(':', 1)[1]
         parts = [x for x in str(block_prefix).split('/') if x]
         if not parts:
             return str(block_prefix)
@@ -784,16 +819,24 @@ def _manual_load_gru_weights_from_h5(model: Any, weights_path: Path) -> bool:
                 return parts[i]
         return parts[-1]
 
-    gru_items = [
+    gru_items: list[tuple[str, str, dict[str, Any]]] = [
         (k, _extract_layer_name(k), v)
         for k, v in gru_blocks.items()
         if all(x in v for x in ('kernel', 'recurrent_kernel', 'bias'))
     ]
-    dense_items = [
+    dense_items: list[tuple[str, str, dict[str, Any]]] = [
         (k, _extract_layer_name(k), v)
         for k, v in dense_blocks.items()
         if all(x in v for x in ('kernel', 'bias'))
     ]
+
+    def _name_key(prefix: str, name: str):
+        if name == prefix:
+            return (0, 0)
+        m = re.match(rf'^{re.escape(prefix)}_(\d+)$', name)
+        if m:
+            return (0, int(m.group(1)) + 1)
+        return (1, name)
 
     gru_items.sort(key=lambda t: _name_key('gru', t[1]))
     dense_items.sort(key=lambda t: _name_key('dense', t[1]))
