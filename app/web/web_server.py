@@ -567,6 +567,51 @@ def _fetch_last_close_n(stock_code: str, market_type: str, days: int) -> pd.Data
     return out
 
 
+def _minmax_scale_1d(x: np.ndarray) -> Dict[str, Any]:
+    arr = np.asarray(x, dtype=np.float32).reshape(-1)
+    if arr.size == 0:
+        return {'scaled': np.asarray([], dtype=np.float32), 'x_min': 0.0, 'x_max': 0.0}
+    x_min = float(np.nanmin(arr))
+    x_max = float(np.nanmax(arr))
+    denom = x_max - x_min
+    if not np.isfinite(denom) or denom == 0.0:
+        scaled = np.zeros_like(arr, dtype=np.float32)
+    else:
+        scaled = ((arr - x_min) / denom).astype(np.float32)
+    return {'scaled': scaled, 'x_min': x_min, 'x_max': x_max}
+
+
+def _minmax_inv(y: float, x_min: float, x_max: float) -> float:
+    try:
+        y0 = float(y)
+        mn = float(x_min)
+        mx = float(x_max)
+    except Exception:
+        return float('nan')
+    denom = mx - mn
+    if not np.isfinite(denom) or denom == 0.0:
+        return mn
+    return mn + y0 * denom
+
+
+def _next_trading_days(last_dt: datetime, n: int) -> list[str]:
+    try:
+        k = int(n)
+    except Exception:
+        k = 0
+    k = max(0, k)
+
+    cur = last_dt
+    out: list[str] = []
+    while len(out) < k:
+        cur = cur + timedelta(days=1)
+        # 0=Mon ... 5=Sat 6=Sun
+        if cur.weekday() >= 5:
+            continue
+        out.append(cur.strftime('%Y-%m-%d'))
+    return out
+
+
 def _normalize_predict_code(stock_code: str, market_type: str) -> str:
     code = (stock_code or '').strip()
     mt = (market_type or 'A').strip().upper()
