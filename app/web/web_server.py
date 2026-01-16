@@ -715,41 +715,56 @@ def _manual_load_gru_weights_from_h5(model: Any, weights_path: Path) -> bool:
 
     try:
         with h5py.File(str(weights_path), 'r') as f:
+            try:
+                logger.info('manual gru load: h5 top_keys=%s', list(f.keys())[:30])
+            except Exception:
+                pass
             pairs = _iter_datasets(f, '')
     except Exception:
         return False
 
-    groups: dict[str, dict[str, Any]] = {}
+    # More general: infer weights from dataset paths rather than top-level group names.
+    # Supports multiple TF/Keras H5 layouts (some omit layer_names / use different nesting).
+    gru_blocks: dict[str, dict[str, Any]] = {}
+    dense_blocks: dict[str, dict[str, Any]] = {}
     for path, arr in pairs:
         p = '/' + str(path).lstrip('/')
-        parts = [x for x in p.split('/') if x]
-        if not parts:
+
+        mg = re.match(
+            r'^(.*/gru_cell[^/]*)/(kernel(?::0)?|recurrent_kernel(?::0)?|bias(?::0)?)$',
+            p,
+        )
+        if mg:
+            prefix = mg.group(1)
+            kind = mg.group(2).split(':', 1)[0]
+            d = gru_blocks.setdefault(prefix, {})
+            d[kind] = arr
             continue
 
-        group = ''
-        if 'model_weights' in parts:
-            i = parts.index('model_weights')
-            if i + 1 < len(parts):
-                group = parts[i + 1]
-        else:
-            group = parts[0]
-        if not group:
-            continue
+        md = re.match(r'^(.*/dense[^/]*)/(kernel(?::0)?|bias(?::0)?)$', p)
+        if md:
+            prefix = md.group(1)
+            kind = md.group(2).split(':', 1)[0]
+            d = dense_blocks.setdefault(prefix, {})
+            d[kind] = arr
 
-        d = groups.setdefault(group, {})
-        if '/gru_cell/' in p:
-            if p.endswith('kernel:0'):
-                d['gru_kernel'] = arr
-            elif p.endswith('recurrent_kernel:0'):
-                d['gru_recurrent_kernel'] = arr
-            elif p.endswith('bias:0'):
-                d['gru_bias'] = arr
-        else:
-            if group.startswith('dense'):
-                if p.endswith('kernel:0'):
-                    d['dense_kernel'] = arr
-                elif p.endswith('bias:0'):
-                    d['dense_bias'] = arr
+    if not gru_blocks and not dense_blocks:
+        try:
+            logger.warning('manual gru load: no matching datasets; total_datasets=%s', len(pairs))
+        except Exception:
+            pass
+        try:
+            sample = []
+            for path, _arr in pairs:
+                s = str(path)
+                sl = s.lower()
+                if any(k in sl for k in ('gru', 'dense', 'kernel', 'recurrent', 'bias', 'cell', 'weight')):
+                    sample.append(s)
+                if len(sample) >= 60:
+                    break
+            logger.warning('manual gru load: sample_dataset_paths=%s', sample)
+        except Exception:
+            pass
 
     def _name_key(prefix: str, name: str):
         if name == prefix:
@@ -759,20 +774,36 @@ def _manual_load_gru_weights_from_h5(model: Any, weights_path: Path) -> bool:
             return (0, int(m.group(1)) + 1)
         return (1, name)
 
-    gru_groups = [
-        n for n, v in groups.items()
-        if n.startswith('gru') and all(k in v for k in ('gru_kernel', 'gru_recurrent_kernel', 'gru_bias'))
+    def _extract_layer_name(block_prefix: str) -> str:
+        parts = [x for x in str(block_prefix).split('/') if x]
+        if not parts:
+            return str(block_prefix)
+        # Heuristic: often .../<layer_name>/gru_cell... or .../<layer_name>/dense...
+        for i in range(len(parts) - 1):
+            if parts[i + 1].startswith('gru_cell'):
+                return parts[i]
+        return parts[-1]
+
+    gru_items = [
+        (k, _extract_layer_name(k), v)
+        for k, v in gru_blocks.items()
+        if all(x in v for x in ('kernel', 'recurrent_kernel', 'bias'))
     ]
-    dense_groups = [
-        n for n, v in groups.items()
-        if n.startswith('dense') and all(k in v for k in ('dense_kernel', 'dense_bias'))
+    dense_items = [
+        (k, _extract_layer_name(k), v)
+        for k, v in dense_blocks.items()
+        if all(x in v for x in ('kernel', 'bias'))
     ]
 
-    gru_groups.sort(key=lambda n: _name_key('gru', n))
-    dense_groups.sort(key=lambda n: _name_key('dense', n))
+    gru_items.sort(key=lambda t: _name_key('gru', t[1]))
+    dense_items.sort(key=lambda t: _name_key('dense', t[1]))
 
     try:
-        logger.info('manual gru load: discovered groups gru=%s dense=%s', gru_groups[:10], dense_groups[:10])
+        logger.info(
+            'manual gru load: discovered blocks gru=%s dense=%s',
+            [x[1] for x in gru_items[:10]],
+            [x[1] for x in dense_items[:10]],
+        )
     except Exception:
         pass
 
@@ -781,22 +812,29 @@ def _manual_load_gru_weights_from_h5(model: Any, weights_path: Path) -> bool:
         dense_layers = [l for l in getattr(model, 'layers', []) if isinstance(l, tf.keras.layers.Dense)]
         if not gru_layers or not dense_layers:
             return False
-        if len(gru_groups) < len(gru_layers) or not dense_groups:
-            logger.warning('manual gru load: insufficient groups in h5 (gru_groups=%s dense_groups=%s)', gru_groups, dense_groups)
+        if len(gru_items) < len(gru_layers) or not dense_items:
+            logger.warning(
+                'manual gru load: insufficient blocks in h5 (gru_blocks=%s dense_blocks=%s)',
+                [x[1] for x in gru_items],
+                [x[1] for x in dense_items],
+            )
             return False
 
         for i, layer in enumerate(gru_layers):
-            gname = gru_groups[i]
-            v = groups[gname]
-            layer.cell.kernel.assign(np.asarray(v['gru_kernel']))
-            layer.cell.recurrent_kernel.assign(np.asarray(v['gru_recurrent_kernel']))
-            layer.cell.bias.assign(np.asarray(v['gru_bias']))
+            _, lname, v = gru_items[i]
+            layer.cell.kernel.assign(np.asarray(v['kernel']))
+            layer.cell.recurrent_kernel.assign(np.asarray(v['recurrent_kernel']))
+            layer.cell.bias.assign(np.asarray(v['bias']))
 
-        d0 = groups[dense_groups[0]]
-        dense_layers[-1].kernel.assign(np.asarray(d0['dense_kernel']))
-        dense_layers[-1].bias.assign(np.asarray(d0['dense_bias']))
+        _, dense_lname, d0 = dense_items[0]
+        dense_layers[-1].kernel.assign(np.asarray(d0['kernel']))
+        dense_layers[-1].bias.assign(np.asarray(d0['bias']))
 
-        logger.info('manual gru load: assigned weights from h5 gru_groups=%s dense_group=%s', gru_groups[: len(gru_layers)], dense_groups[0])
+        logger.info(
+            'manual gru load: assigned weights from h5 gru_layers=%s dense_layer=%s',
+            [x[1] for x in gru_items[: len(gru_layers)]],
+            dense_lname,
+        )
         return True
     except Exception as e:
         logger.warning('manual gru load failed: %s', e)
