@@ -620,13 +620,19 @@ def _load_gru_model() -> Any:
         learning_rate=learning_rate,
     )
 
+    warmup_x = np.zeros((1, int(lookback), 1), dtype=np.float32)
     try:
         model.build((None, int(lookback), 1))
     except Exception:
-        try:
-            _ = model.predict(np.zeros((1, int(lookback), 1), dtype=np.float32), verbose=0)
-        except Exception:
-            pass
+        pass
+
+    try:
+        _ = model(warmup_x, training=False)
+    except Exception as e:
+        logger.warning('gru model warmup forward failed: %s', e)
+
+    if not getattr(model, 'weights', None):
+        raise ValueError('GRU模型初始化失败：模型变量未创建，无法加载权重（可能是TensorFlow/Keras版本不兼容）')
     try:
         model.load_weights(str(weights))
     except Exception as e:
