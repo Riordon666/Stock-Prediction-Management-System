@@ -9,6 +9,8 @@ import threading
 import time
 import json
 import re
+import ssl
+import urllib.error
 import urllib.request
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -61,6 +63,42 @@ class _WerkzeugProgressFilter(logging.Filter):
 
 
 logging.getLogger('werkzeug').addFilter(_WerkzeugProgressFilter())
+
+
+def _allow_insecure_https() -> bool:
+    v = (os.getenv('ALLOW_INSECURE_HTTPS') or '').strip().lower()
+    return v in {'1', 'true', 'yes', 'y', 'on'}
+
+
+def _urlopen_read_text(req: urllib.request.Request, timeout: int) -> str:
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.read().decode('utf-8', errors='ignore')
+    except Exception as e:
+        msg = str(e)
+        if 'CERTIFICATE_VERIFY_FAILED' not in msg:
+            raise
+
+        url = getattr(req, 'full_url', '')
+
+        try:
+            import certifi  # type: ignore
+
+            ctx = ssl.create_default_context(cafile=certifi.where())
+            with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
+                return resp.read().decode('utf-8', errors='ignore')
+        except Exception as e2:
+            if not _allow_insecure_https():
+                raise urllib.error.URLError(
+                    f"{e} (certifi_retry_failed={type(e2).__name__}: {e2}; "
+                    "set ALLOW_INSECURE_HTTPS=1 to bypass verification as a temporary workaround)"
+                )
+
+        logger.warning('ssl verify failed; retrying with insecure context url=%s', url)
+        ctx2 = ssl._create_unverified_context()
+        with urllib.request.urlopen(req, timeout=timeout, context=ctx2) as resp:
+            return resp.read().decode('utf-8', errors='ignore')
+
 
 _progress_lock = threading.Lock()
 _progress_store: Dict[str, Dict[str, Any]] = {}
@@ -217,8 +255,7 @@ def _fetch_tophubdata_hotspots(limit: int) -> Dict[str, Any]:
     )
 
     try:
-        with urllib.request.urlopen(req, timeout=8) as resp:
-            raw = resp.read().decode('utf-8', errors='ignore')
+        raw = _urlopen_read_text(req, timeout=8)
         payload = json.loads(raw) if raw else {}
 
         data: Any = (payload.get('data') if isinstance(payload, dict) else None)
@@ -279,8 +316,7 @@ def _fetch_tophub_today_hotspots(limit: int) -> Dict[str, Any]:
             )
 
             try:
-                with urllib.request.urlopen(req, timeout=10) as resp:
-                    raw = resp.read().decode('utf-8', errors='ignore')
+                raw = _urlopen_read_text(req, timeout=10)
                 if raw:
                     break
             except Exception as e:
@@ -553,6 +589,14 @@ def _load_gru_model() -> Any:
     if size <= 0:
         raise ValueError('GRU模型权重文件为空，请先训练模型或重新上传权重文件')
 
+    head = b''
+    try:
+        with open(weights, 'rb') as f:
+            head = f.read(16)
+    except Exception:
+        head = b''
+    is_hdf5 = (len(head) >= 8 and head[:8] == b'\x89HDF\r\n\x1a\n')
+
     mtime = float(weights.stat().st_mtime)
     if _gru_model_cache.get('model') is not None and float(_gru_model_cache.get('mtime') or 0.0) >= mtime:
         return _gru_model_cache.get('model')
@@ -582,7 +626,7 @@ def _load_gru_model() -> Any:
             'GRU模型权重加载失败：权重文件可能已损坏/格式不匹配。'
             '请在服务器上重新训练一次 GRU，或将本地训练产物 forecasting/models/gru/checkpoints/latest.weights.h5 '
             '拷贝到服务器同路径后重启服务。'
-            f' (detail={type(e).__name__}: {e})'
+            f' (path={weights}; size={size}; hdf5={is_hdf5}; detail={type(e).__name__}: {e})'
         )
 
     _gru_model_cache['model'] = model
