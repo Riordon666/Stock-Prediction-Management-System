@@ -541,6 +541,32 @@ def _get_history_df(stock_code: str, market_type: str, period: str) -> pd.DataFr
     return df
 
 
+def _fetch_last_close_n(stock_code: str, market_type: str, days: int) -> pd.DataFrame:
+    try:
+        n = int(days)
+    except Exception:
+        n = 0
+    n = max(1, n)
+
+    # Fetch a sufficiently long window to ensure we have at least n trading days.
+    # Using 1y is simple and stable across different data providers.
+    df = _get_history_df(stock_code, market_type, period='1y')
+    if df is None or df.empty:
+        return pd.DataFrame()
+
+    if 'close' not in df.columns or 'date' not in df.columns:
+        return pd.DataFrame()
+
+    out = df[['date', 'close']].copy()
+    out['close'] = pd.to_numeric(out['close'], errors='coerce')
+    out['date'] = pd.to_datetime(out['date'], errors='coerce')
+    out = out.dropna(subset=['date', 'close']).sort_values('date')
+    if len(out) > n:
+        out = out.tail(n)
+    out = out.reset_index(drop=True)
+    return out
+
+
 def _normalize_predict_code(stock_code: str, market_type: str) -> str:
     code = (stock_code or '').strip()
     mt = (market_type or 'A').strip().upper()
