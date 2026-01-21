@@ -399,7 +399,15 @@ def train_loop(cfg: TrainConfig) -> None:
     )
 
     if bool(getattr(cfg, 'load_existing_weights', True)) and paths['latest_weights'].exists():
-        model.load_weights(str(paths['latest_weights']))
+        try:
+            model.load_weights(str(paths['latest_weights']))
+        except Exception as e:
+            print(
+                f"[WARN] load latest.weights.h5 failed: {type(e).__name__}: {e}. "
+                "Start training from scratch (set RESET=True or delete the file to avoid this warning).",
+                flush=True,
+            )
+            state = None
 
     if state is not None:
         if state.get('universe_key') != universe_key:

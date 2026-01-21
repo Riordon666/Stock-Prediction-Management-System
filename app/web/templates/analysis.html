@@ -24,7 +24,7 @@
             </div>
 
             <nav class="topnav" aria-label="主导航">
-                <a class="nav-item" href="/">首页</a>
+                <a class="nav-item" href="/">实时快讯</a>
                 <a class="nav-item" href="/analysis">股票分析</a>
                 <a class="nav-item" href="/predict">股票预测</a>
             </nav>
@@ -108,7 +108,7 @@
                     <div class="analysis-form-row">
                         <div class="input-group input-group-sm field-code">  <!-- 添加input-group-sm使输入框更小 -->
                             <span class="input-group-text">股票代码</span>
-                            <input type="text" class="form-control" id="stock-code" placeholder="例: 600519，更多请看下方示例" required>
+                            <input type="text" class="form-control" id="stock-code" placeholder="例: 600519，更多请看下方示例，点击代码即可复制" required>
                         </div>
 
                         <div class="input-group input-group-sm field-market">  <!-- 添加input-group-sm使下拉框更小 -->
@@ -140,7 +140,7 @@
                     <div id="analysis-error"></div>
 
                     <div class="introduction-row">
-                        <div class="introduction">常见的A股及其股票代码(点击代码即可复制)：
+                        <div class="introduction">常见的A股及其股票代码：
                             <ul>
                                 <li>中国平安：<span class="ticker-code" data-code="601318">601318</span></li>
                                 <li>五粮液：<span class="ticker-code" data-code="000858">000858</span></li>
@@ -183,7 +183,7 @@
                                 <li>立讯精密：<span class="ticker-code" data-code="002475">002475</span></li>
                             </ul>
                         </div>
-                        <div class="introduction">常见的港股及其股票代码(点击代码即可复制)：
+                        <div class="introduction">常见的港股及其股票代码：
                             <ul>
                                 <li>中国移动：<span class="ticker-code" data-code="00941">00941</span></li>
                                 <li>腾讯控股：<span class="ticker-code" data-code="00700">00700</span></li>
@@ -226,7 +226,7 @@
                                 <li>华润置地：<span class="ticker-code" data-code="01109">01109</span></li>
                             </ul>
                         </div>
-                        <div class="introduction">常见的美股及其股票代码(点击代码即可复制)：
+                        <div class="introduction">常见的美股及其股票代码(美股分析时间可能较长，请耐心等待)：
                             <ul>
                                 <li>苹果：<span class="ticker-code" data-code="AAPL">AAPL</span></li>
                                 <li>微软：<span class="ticker-code" data-code="MSFT">MSFT</span></li>
@@ -439,25 +439,39 @@
             <div class="site-footer-inner">
                 <div class="site-footer-top">
                     <div class="copyright">
-                        © 2026 基于 Flask 的股票预测管理系统设计与实现
+                        2026 基于 Flask 的股票预测管理系统设计与实现
                     </div>
-                    <a role="button" target="_blank" href="https://beian.miit.gov.cn/" class="copyright">
-                        <img src="https://lemoncoder.cn/themes/halo-theme-vapor/assets/imgs/icpb.webp" class="loaded" alt="底部链接">
-                        <span>蜀ICP备2026002494号-1</span>
-                    </a>
+                    <div class="footer-records">
+                        <a role="button" target="_blank" href="https://beian.miit.gov.cn/" class="copyright">
+                            <img src="https://lemoncoder.cn/themes/halo-theme-vapor/assets/imgs/icpb.webp" class="loaded" alt="底部链接">
+                            <span>蜀ICP备2026002494号-1</span>
+                        </a>
+                        <a role="button" target="_blank" href="https://beian.mps.gov.cn/#/query/webSearch" class="copyright">
+                            <img src="https://lemoncoder.cn/upload/gawb.png?width=800" class="loaded" alt="底部链接">
+                            <span>川公网安备51111102000146号</span>
+                        </a>
+                    </div>
 
                     <div class="footer-links" aria-label="页脚链接">
+                        <a class="footer-link footer-link-qq" href="tencent://message/?uin=2717831140&Site=&Menu=yes" target="_blank" rel="noopener" aria-label="QQ 联系方式">
+                            <svg t="1768969563018" class="footer-icon icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="1605" width="200" height="200" aria-hidden="true" focusable="false">
+                                <path d="M824.8 613.2c-16-51.4-34.4-94.6-62.7-165.3C766.5 262.2 689.3 112 511.5 112 331.7 112 256.2 265.2 261 447.9c-28.4 70.8-46.7 113.7-62.7 165.3-34 109.5-23 154.8-14.6 155.8 18 2.2 70.1-82.4 70.1-82.4 0 49 25.2 112.9 79.8 159-26.4 8.1-85.7 29.9-71.6 53.8 11.4 19.3 196.2 12.3 249.5 6.3 53.3 6 238.1 13 249.5-6.3 14.1-23.8-45.3-45.7-71.6-53.8 54.6-46.2 79.8-110.1 79.8-159 0 0 52.1 84.6 70.1 82.4 8.5-1.1 19.5-46.4-14.5-155.8z" p-id="1606"></path>
+                            </svg>
+                            <span>QQ</span>
+                        </a>
+
                         <a class="footer-link" href="https://github.com/Riordon666/Stock-Prediction-Management-System" target="_blank" rel="noopener" aria-label="访问 GitHub 源代码">
                             <svg class="footer-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                                 <path fill="currentColor" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.455-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0 1 12 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.748-1.026 2.748-1.026.546 1.378.202 2.397.1 2.65.64.7 1.028 1.595 1.028 2.688 0 3.848-2.338 4.695-4.566 4.943.36.31.68.923.68 1.86 0 1.342-.012 2.422-.012 2.752 0 .268.18.58.688.482A10.019 10.019 0 0 0 22 12.017C22 6.484 17.523 2 12 2Z"/>
                             </svg>
-                            <span>源代码</span>
+                            <span>GitHub</span>
                         </a>
+
                         <a class="footer-link" href="http://mail.riordon.xyz" target="_blank" aria-label="发送邮件到作者邮箱">
                             <svg class="footer-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                                 <path fill="currentColor" d="M20 4H4c-1.103 0-2 .897-2 2v12c0 1.103.897 2 2 2h16c1.103 0 2-.897 2-2V6c0-1.103-.897-2-2-2Zm0 4.236-7.382 4.92a1 1 0 0 1-1.11 0L4 8.236V6l8 5.333L20 6v2.236Z"/>
                             </svg>
-                            <span>联系邮箱：任意字符@riordon.xyz</span>
+                            <span>邮箱：任意字符@riordon.xyz</span>
                         </a>
                     </div>
                 </div>
