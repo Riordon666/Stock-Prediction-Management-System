@@ -78,6 +78,44 @@ class BaostockAdapter(BaseAdapter):
         df['date'] = pd.to_datetime(df['date'])
         return df
 
+    def get_board_stocks(self, board: str) -> List[str]:
+        """获取板块股票列表（baostock兜底，仅A股）"""
+        board_key = (board or '').strip().lower()
+        if board_key not in {'all', 'sh', 'sz', 'bj', 'cyb', 'kcb'}:
+            return []
+
+        self._ensure_login()
+        rs = bs.query_stock_basic()
+        if rs.error_code != '0':
+            return []
+
+        codes: List[str] = []
+        while rs.next():
+            row = rs.get_row_data()
+            if not row:
+                continue
+            code = str(row[0] or '').strip()
+            status = str(row[5] or '').strip() if len(row) > 5 else ''
+            if status and status != '1':
+                continue
+
+            if board_key == 'sh' and not code.startswith('sh.'):
+                continue
+            if board_key == 'sz' and not code.startswith('sz.'):
+                continue
+            if board_key == 'bj' and not code.startswith('bj.'):
+                continue
+            if board_key == 'cyb' and not code.startswith('sz.3'):
+                continue
+            if board_key == 'kcb' and not code.startswith('sh.688'):
+                continue
+
+            raw = code.replace('sh.', '').replace('sz.', '').replace('bj.', '')
+            if raw:
+                codes.append(raw)
+
+        return codes
+
     def get_index_stocks(self, index_code: str) -> List[str]:
         """获取指数成分股"""
         self._ensure_login()

@@ -30,11 +30,14 @@ class DateEncoder(json.JSONEncoder):
 
 
 class NewsFetcher:
+    _LATEST_CACHE_TTL_SECONDS = 45
+
     def __init__(self, save_dir: str = "data/news"):
         self.save_dir = save_dir
         os.makedirs(self.save_dir, exist_ok=True)
         self.last_fetch_time: Optional[datetime] = None
         self.news_hashes = set()
+        self._latest_cache: Dict[Any, Dict[str, Any]] = {}
         self._load_existing_hashes()
 
     def _load_existing_hashes(self) -> None:
@@ -158,6 +161,7 @@ class NewsFetcher:
                 total_count,
                 total_count - new_count,
             )
+            self._latest_cache = {}
             self.last_fetch_time = now
             return True
         except Exception:
@@ -165,10 +169,27 @@ class NewsFetcher:
             return False
 
     def get_latest_news(self, days: int = 1, limit: int = 50) -> List[Dict[str, Any]]:
+        try:
+            days_i = max(1, int(days))
+        except Exception:
+            days_i = 1
+        try:
+            limit_i = max(1, int(limit))
+        except Exception:
+            limit_i = 50
+
+        cache_key = (days_i, limit_i)
+        now_ts = time.time()
+        cached = self._latest_cache.get(cache_key)
+        if cached and (now_ts - float(cached.get('ts') or 0.0)) < self._LATEST_CACHE_TTL_SECONDS:
+            cached_items = cached.get('items')
+            if isinstance(cached_items, list):
+                return cached_items
+
         news_data: List[Dict[str, Any]] = []
         today = datetime.now()
 
-        for i in range(max(1, int(days))):
+        for i in range(days_i):
             d = today - timedelta(days=i)
             filename = self.get_news_filename(d)
             if not os.path.exists(filename):
@@ -191,7 +212,9 @@ class NewsFetcher:
 
         deduplicated_news = list(unique_news.values())
         deduplicated_news.sort(key=lambda x: x.get('datetime', ''), reverse=True)
-        return deduplicated_news[: max(1, int(limit))]
+        result = deduplicated_news[:limit_i]
+        self._latest_cache[cache_key] = {'ts': now_ts, 'items': result}
+        return result
 
 
 news_fetcher = NewsFetcher()

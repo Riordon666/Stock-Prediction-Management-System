@@ -75,8 +75,24 @@ class DataProvider:
     # ========== akshare专有方法（无baostock备用）==========
 
     def get_board_stocks(self, board: str) -> List[str]:
-        """获取板块股票列表（仅akshare支持）"""
-        return self.akshare.get_board_stocks(board)
+        """获取板块股票列表（优先akshare，失败时尝试baostock）"""
+        codes: List[str] = []
+        if self.akshare is not None:
+            try:
+                codes = self.akshare.get_board_stocks(board)
+            except Exception as e:
+                logger.warning("akshare.get_board_stocks failed: %s", e)
+
+        if codes:
+            return codes
+
+        if self.baostock is not None:
+            try:
+                codes = self.baostock.get_board_stocks(board)
+            except Exception as e:
+                logger.warning("baostock.get_board_stocks failed: %s", e)
+
+        return codes or []
 
     def get_industry_list(self) -> pd.DataFrame:
         """获取行业板块列表（仅akshare支持）"""

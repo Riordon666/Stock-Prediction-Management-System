@@ -151,6 +151,16 @@ def _progress_cleanup(max_age_seconds: int = 30 * 60) -> None:
                 _progress_store.pop(k, None)
 
 
+def _trigger_news_fetch_async() -> None:
+    def _run_fetch() -> None:
+        try:
+            news_fetcher.fetch_and_save()
+        except Exception:
+            logger.exception('api_fetch_news background fetch failed')
+
+    threading.Thread(target=_run_fetch, daemon=True).start()
+
+
 # 基础路由 - 页面路由
 @app.route('/')
 def index():
@@ -379,6 +389,7 @@ def api_latest_news():
         days = int(request.args.get('days') or 1)
     except Exception:
         days = 1
+
     try:
         limit = int(request.args.get('limit') or 50)
     except Exception:
@@ -387,6 +398,10 @@ def api_latest_news():
         important = int(request.args.get('important') or 0)
     except Exception:
         important = 0
+    try:
+        fast = int(request.args.get('fast') or 0)
+    except Exception:
+        fast = 0
 
     days = max(1, min(7, days))
     limit = max(1, min(500, limit))
@@ -394,11 +409,14 @@ def api_latest_news():
     try:
         items = news_fetcher.get_latest_news(days=days, limit=limit)
         if not items:
-            try:
-                news_fetcher.fetch_and_save()
-            except Exception:
-                pass
-            items = news_fetcher.get_latest_news(days=days, limit=limit)
+            if fast:
+                _trigger_news_fetch_async()
+            else:
+                try:
+                    news_fetcher.fetch_and_save()
+                except Exception:
+                    pass
+                items = news_fetcher.get_latest_news(days=days, limit=limit)
 
         if important:
             items = [x for x in items if _is_important_news(x)]
@@ -412,13 +430,7 @@ def api_latest_news():
 @app.route('/api/fetch_news', methods=['POST'])
 def api_fetch_news():
     try:
-        def _run_fetch() -> None:
-            try:
-                news_fetcher.fetch_and_save()
-            except Exception:
-                logger.exception('api_fetch_news background fetch failed')
-
-        threading.Thread(target=_run_fetch, daemon=True).start()
+        _trigger_news_fetch_async()
         return jsonify({'success': True})
     except Exception as e:
         logger.exception('api_fetch_news failed')

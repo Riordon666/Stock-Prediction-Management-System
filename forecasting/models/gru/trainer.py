@@ -70,11 +70,38 @@ def _ensure_dir(p: Path) -> Path:
     return p
 
 
-def _atomic_write_json(path: Path, data: Dict) -> None:
+def _atomic_write_json(path: Path, data: Dict, retries: int = 3, delay: float = 0.25) -> None:
     _ensure_dir(path.parent)
-    tmp = path.with_suffix(path.suffix + '.tmp')
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
-    os.replace(str(tmp), str(path))
+    payload = json.dumps(data, ensure_ascii=False, indent=2)
+    tmp = path.with_name(f"{path.name}.{int(time.time() * 1000)}.{os.getpid()}.tmp")
+    tmp.write_text(payload, encoding='utf-8')
+
+    last_exc: Optional[Exception] = None
+    for attempt in range(max(1, int(retries))):
+        try:
+            os.replace(str(tmp), str(path))
+            return
+        except PermissionError as exc:
+            last_exc = exc
+            time.sleep(delay * (attempt + 1))
+        except Exception as exc:
+            last_exc = exc
+            break
+
+    try:
+        path.write_text(payload, encoding='utf-8')
+        return
+    except Exception as exc:
+        last_exc = exc
+    finally:
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except Exception:
+            pass
+
+    if last_exc is not None:
+        raise last_exc
 
 
 def _append_jsonl(path: Path, row: Dict) -> None:
@@ -134,6 +161,21 @@ def _normalize_hk_code(code: str) -> str:
     return c
 
 
+def _normalize_a_code(code: str) -> str:
+    c = (code or '').strip()
+    if not c:
+        return ''
+    c = c.replace('.SH', '').replace('.SZ', '').replace('.BJ', '')
+    c = c.replace('.sh', '').replace('.sz', '').replace('.bj', '')
+    c = c.replace('sh', '').replace('sz', '').replace('bj', '')
+    digits = ''.join([ch for ch in c if ch.isdigit()])
+    if len(digits) != 6:
+        return ''
+    if digits[0] not in {'0', '3', '6'}:
+        return ''
+    return digits
+
+
 def _get_universe(cfg: TrainConfig) -> List[Tuple[str, str]]:
     provider = get_data_provider()
 
@@ -147,8 +189,14 @@ def _get_universe(cfg: TrainConfig) -> List[Tuple[str, str]]:
             else:
                 codes = provider.get_board_stocks(cfg.a_board)
                 codes = sorted([str(x).strip() for x in codes if str(x).strip()])
-                if cfg.a_limit and int(cfg.a_limit) > 0:
-                    codes = list(codes)[: int(cfg.a_limit)]
+            raw_codes = list(codes)
+            codes = [_normalize_a_code(x) for x in raw_codes]
+            codes = [x for x in codes if x]
+            if cfg.a_limit and int(cfg.a_limit) > 0:
+                codes = list(codes)[: int(cfg.a_limit)]
+            if not codes:
+                src = cfg.a_stocks_file or f"board={cfg.a_board}"
+                print(f"[WARN] A-share universe empty (source={src}).", flush=True)
             items.extend((m, c) for c in codes)
             continue
 
@@ -363,7 +411,70 @@ def _autoregressive_train(
 
 
 def _save_state(paths: Dict[str, Path], state: Dict) -> None:
-    _atomic_write_json(paths['state'], state)
+    try:
+        _atomic_write_json(paths['state'], state)
+    except PermissionError as exc:
+        print(
+            f"[WARN] save state failed (will retry later): {type(exc).__name__}: {exc}",
+            flush=True,
+        )
+
+
+def _save_weights_safe(model, path: Path, retries: int = 3, delay: float = 0.4) -> bool:
+    _ensure_dir(path.parent)
+    last_exc: Optional[Exception] = None
+    for attempt in range(max(1, int(retries))):
+        tmp = path.with_name(
+            f"{path.stem}.{int(time.time() * 1000)}.{os.getpid()}.{attempt}{path.suffix}"
+        )
+        try:
+            model.save_weights(str(tmp))
+            bak = None
+            if path.name == 'latest.weights.h5':
+                bak = path.with_name('latest.prev.weights.h5')
+            if bak is not None and path.exists():
+                try:
+                    os.replace(str(path), str(bak))
+                except Exception:
+                    pass
+            os.replace(str(tmp), str(path))
+            return True
+        except Exception as exc:
+            last_exc = exc
+            try:
+                if tmp.exists():
+                    tmp.unlink()
+            except Exception:
+                pass
+            time.sleep(delay * (attempt + 1))
+
+    if last_exc is not None:
+        print(
+            f"[WARN] save weights failed (skip): {type(last_exc).__name__}: {last_exc}",
+            flush=True,
+        )
+    return False
+
+
+def _load_weights_compat(model, path: Path) -> Tuple[bool, Optional[Exception]]:
+    try:
+        model.load_weights(str(path))
+        return True, None
+    except Exception as exc:
+        first_exc: Exception = exc
+
+    try:
+        import h5py
+        from tensorflow.python.keras.saving import hdf5_format
+
+        with h5py.File(str(path), 'r') as f:
+            root_keys = set(list(f.keys()))
+            if 'vars' in root_keys:
+                return False, first_exc
+            hdf5_format.load_weights_from_hdf5_group(f, model.layers)
+        return True, None
+    except Exception:
+        return False, first_exc
 
 
 def train_loop(cfg: TrainConfig) -> None:
@@ -399,15 +510,33 @@ def train_loop(cfg: TrainConfig) -> None:
     )
 
     if bool(getattr(cfg, 'load_existing_weights', True)) and paths['latest_weights'].exists():
-        try:
-            model.load_weights(str(paths['latest_weights']))
-        except Exception as e:
+        ok, err = _load_weights_compat(model, paths['latest_weights'])
+        if not ok:
+            prev = paths['latest_weights'].with_name('latest.prev.weights.h5')
+            if prev.exists():
+                ok2, err2 = _load_weights_compat(model, prev)
+                if ok2:
+                    ok, err = True, None
+                    print(
+                        f"[WARN] latest.weights.h5 load failed; fallback to {prev.name} succeeded.",
+                        flush=True,
+                    )
+                else:
+                    err = err2 or err
+
+        if not ok:
             print(
-                f"[WARN] load latest.weights.h5 failed: {type(e).__name__}: {e}. "
-                "Start training from scratch (set RESET=True or delete the file to avoid this warning).",
+                f"[WARN] load latest.weights.h5 failed: {type(err).__name__ if err else 'Error'}: {err}. "
+                "Weights were NOT loaded; aborting to avoid training with a fresh model. "
+                "Fix: set RESET=True to start over, or restore a valid checkpoints/latest.weights.h5 (or latest.prev.weights.h5).",
                 flush=True,
             )
-            state = None
+            raise RuntimeError('failed to load existing weights')
+        else:
+            try:
+                print("[INFO] loaded existing weights.", flush=True)
+            except Exception:
+                pass
 
     if state is not None:
         if state.get('universe_key') != universe_key:
@@ -454,181 +583,189 @@ def train_loop(cfg: TrainConfig) -> None:
     steps_left = int(cfg.steps)
     save_every = max(1, int(cfg.save_every))
     since_save = 0
+    interrupted = False
+    try:
+        while steps_left > 0:
+            completed = set((state.get('completed_in_cycle') or []))
+            if len(completed) >= len(universe):
+                state['completed_in_cycle'] = []
+                completed = set()
+                state['pos'] = 0
+                state['cycle'] = int(state.get('cycle', 0)) + 1
+                lifetime['cycles_completed'] = int(lifetime.get('cycles_completed', 0)) + 1
+                _save_lifetime(paths, lifetime)
 
-    while steps_left > 0:
-        completed = set((state.get('completed_in_cycle') or []))
-        if len(completed) >= len(universe):
-            state['completed_in_cycle'] = []
-            completed = set()
-            state['pos'] = 0
-            state['cycle'] = int(state.get('cycle', 0)) + 1
-            lifetime['cycles_completed'] = int(lifetime.get('cycles_completed', 0)) + 1
+            start_pos = int(state.get('pos', 0))
+            found = None
+            for off in range(len(universe)):
+                idx = (start_pos + off) % len(universe)
+                market_type, code = universe[idx]
+                key = _stock_key(market_type, code)
+                if key not in completed:
+                    found = (idx, market_type, code, key)
+                    break
+
+            if found is None:
+                state['completed_in_cycle'] = []
+                state['pos'] = 0
+                state['cycle'] = int(state.get('cycle', 0)) + 1
+                continue
+
+            idx, market_type, code, key = found
+
+            df = _fetch_last_n_days(code=code, market_type=market_type, total_days=int(cfg.total_days))
+            if df.empty or len(df) < int(cfg.total_days):
+                row = {
+                    'ts': _now_ts(),
+                    'market_type': market_type,
+                    'code': code,
+                    'cycle': int(state.get('cycle', 0)),
+                    'pos': int(idx),
+                    'trained_total': int(state.get('trained_total', 0)),
+                    'status': 'skip_empty',
+                }
+                _append_jsonl(paths['history'], row)
+                completed.add(key)
+                state['completed_in_cycle'] = list(completed)
+                state['pos'] = int(idx) + 1
+                state['ts'] = _now_ts()
+                _save_state(paths, state)
+                print(
+                    f"[GRU] cycle={state.get('cycle', 0)} {len(completed)}/{len(universe)} {market_type}:{code} status=skip_empty",
+                    flush=True,
+                )
+                steps_left -= 1
+                continue
+
+            close = df['close'].to_numpy(dtype=np.float32)
+            series_scaled, x_min, x_max = _scale_minmax(close)
+            expected_samples = int(cfg.total_days) - int(cfg.lookback)
+            if expected_samples > 0 and int(len(series_scaled) - int(cfg.lookback)) != expected_samples:
+                row = {
+                    'ts': _now_ts(),
+                    'market_type': market_type,
+                    'code': code,
+                    'cycle': int(state.get('cycle', 0)),
+                    'pos': int(idx),
+                    'trained_total': int(state.get('trained_total', 0)),
+                    'samples': int(len(series_scaled) - int(cfg.lookback)),
+                    'expected_samples': int(expected_samples),
+                    'status': 'skip_bad_samples',
+                }
+                _append_jsonl(paths['history'], row)
+                completed.add(key)
+                state['completed_in_cycle'] = list(completed)
+                state['pos'] = int(idx) + 1
+                state['ts'] = _now_ts()
+                _save_state(paths, state)
+                steps_left -= 1
+                continue
+
+            stock_info = _fetch_stock_info(code=code, market_type=market_type)
+
+            _cache_training_data(
+                market_type=market_type,
+                code=code,
+                df=df,
+                x_min=x_min,
+                x_max=x_max,
+                stock_info=stock_info,
+            )
+
+            loss = None
+            val_loss = None
+            mse_scaled = None
+            mse_real = None
+
+            if bool(getattr(cfg, 'autoregressive_training', False)):
+                loss, mse_scaled, mse_real = _autoregressive_train(
+                    model=model,
+                    values_scaled=series_scaled,
+                    lookback=int(cfg.lookback),
+                    epochs=int(cfg.epochs_per_stock),
+                    x_min=float(x_min),
+                    x_max=float(x_max),
+                )
+                if val_loss is None and mse_scaled is not None:
+                    val_loss = float(mse_scaled)
+            else:
+                x, y = _make_windows(series_scaled, lookback=int(cfg.lookback))
+                hist = model.fit(
+                    x,
+                    y,
+                    epochs=int(cfg.epochs_per_stock),
+                    batch_size=int(cfg.batch_size),
+                    verbose=0,
+                    shuffle=True,
+                    validation_split=0.2,
+                )
+
+                try:
+                    loss = float(hist.history.get('loss', [None])[-1])
+                    val_loss = float(hist.history.get('val_loss', [None])[-1])
+                except Exception:
+                    pass
+
+            row = {
+                'ts': _now_ts(),
+                'market_type': market_type,
+                'code': code,
+                'run_id': int(state.get('run_id', 1)),
+                'cycle': int(state.get('cycle', 0)),
+                'pos': int(idx),
+                'trained_total': int(state.get('trained_total', 0)) + 1,
+                'samples': int(expected_samples),
+                'loss': loss,
+                'val_loss': val_loss,
+                'mse_scaled': mse_scaled,
+                'mse_real': mse_real,
+                'autoregressive_training': bool(getattr(cfg, 'autoregressive_training', False)),
+                'status': 'ok',
+            }
+            _append_jsonl(paths['history'], row)
+
+            completed.add(key)
+            state['completed_in_cycle'] = list(completed)
+            state['pos'] = int(idx) + 1
+            state['trained_total'] = int(state.get('trained_total', 0)) + 1
+            state['ts'] = _now_ts()
+
+            lifetime['trained_total'] = int(lifetime.get('trained_total', 0)) + 1
             _save_lifetime(paths, lifetime)
 
-        start_pos = int(state.get('pos', 0))
-        found = None
-        for off in range(len(universe)):
-            idx = (start_pos + off) % len(universe)
-            market_type, code = universe[idx]
-            key = _stock_key(market_type, code)
-            if key not in completed:
-                found = (idx, market_type, code, key)
-                break
-
-        if found is None:
-            state['completed_in_cycle'] = []
-            state['pos'] = 0
-            state['cycle'] = int(state.get('cycle', 0)) + 1
-            continue
-
-        idx, market_type, code, key = found
-
-        df = _fetch_last_n_days(code=code, market_type=market_type, total_days=int(cfg.total_days))
-        if df.empty or len(df) < int(cfg.total_days):
-            row = {
-                'ts': _now_ts(),
-                'market_type': market_type,
-                'code': code,
-                'cycle': int(state.get('cycle', 0)),
-                'pos': int(idx),
-                'trained_total': int(state.get('trained_total', 0)),
-                'status': 'skip_empty',
-            }
-            _append_jsonl(paths['history'], row)
-            completed.add(key)
-            state['completed_in_cycle'] = list(completed)
-            state['pos'] = int(idx) + 1
-            state['ts'] = _now_ts()
+            _save_weights_safe(model, paths['latest_weights'])
             _save_state(paths, state)
-            print(
-                f"[GRU] cycle={state.get('cycle', 0)} {len(completed)}/{len(universe)} {market_type}:{code} status=skip_empty",
-                flush=True,
-            )
-            steps_left -= 1
-            continue
-
-        close = df['close'].to_numpy(dtype=np.float32)
-        series_scaled, x_min, x_max = _scale_minmax(close)
-        expected_samples = int(cfg.total_days) - int(cfg.lookback)
-        if expected_samples > 0 and int(len(series_scaled) - int(cfg.lookback)) != expected_samples:
-            row = {
-                'ts': _now_ts(),
-                'market_type': market_type,
-                'code': code,
-                'cycle': int(state.get('cycle', 0)),
-                'pos': int(idx),
-                'trained_total': int(state.get('trained_total', 0)),
-                'samples': int(len(series_scaled) - int(cfg.lookback)),
-                'expected_samples': int(expected_samples),
-                'status': 'skip_bad_samples',
-            }
-            _append_jsonl(paths['history'], row)
-            completed.add(key)
-            state['completed_in_cycle'] = list(completed)
-            state['pos'] = int(idx) + 1
-            state['ts'] = _now_ts()
-            _save_state(paths, state)
-            steps_left -= 1
-            continue
-
-        stock_info = _fetch_stock_info(code=code, market_type=market_type)
-
-        _cache_training_data(
-            market_type=market_type,
-            code=code,
-            df=df,
-            x_min=x_min,
-            x_max=x_max,
-            stock_info=stock_info,
-        )
-
-        loss = None
-        val_loss = None
-        mse_scaled = None
-        mse_real = None
-
-        if bool(getattr(cfg, 'autoregressive_training', False)):
-            loss, mse_scaled, mse_real = _autoregressive_train(
-                model=model,
-                values_scaled=series_scaled,
-                lookback=int(cfg.lookback),
-                epochs=int(cfg.epochs_per_stock),
-                x_min=float(x_min),
-                x_max=float(x_max),
-            )
-        else:
-            x, y = _make_windows(series_scaled, lookback=int(cfg.lookback))
-            hist = model.fit(
-                x,
-                y,
-                epochs=int(cfg.epochs_per_stock),
-                batch_size=int(cfg.batch_size),
-                verbose=0,
-                shuffle=True,
-                validation_split=0.2,
-            )
 
             try:
-                loss = float(hist.history.get('loss', [None])[-1])
-                val_loss = float(hist.history.get('val_loss', [None])[-1])
+                loss_s = f"{loss:.6f}" if loss is not None else "None"
+                val_s = f"{val_loss:.6f}" if val_loss is not None else "None"
             except Exception:
-                pass
+                loss_s = str(loss)
+                val_s = str(val_loss)
 
-        row = {
-            'ts': _now_ts(),
-            'market_type': market_type,
-            'code': code,
-            'run_id': int(state.get('run_id', 1)),
-            'cycle': int(state.get('cycle', 0)),
-            'pos': int(idx),
-            'trained_total': int(state.get('trained_total', 0)) + 1,
-            'samples': int(expected_samples),
-            'loss': loss,
-            'val_loss': val_loss,
-            'mse_scaled': mse_scaled,
-            'mse_real': mse_real,
-            'autoregressive_training': bool(getattr(cfg, 'autoregressive_training', False)),
-            'status': 'ok',
-        }
-        _append_jsonl(paths['history'], row)
+            try:
+                mse_scaled_s = f"{mse_scaled:.6f}" if mse_scaled is not None else "None"
+                mse_real_s = f"{mse_real:.6f}" if mse_real is not None else "None"
+            except Exception:
+                mse_scaled_s = str(mse_scaled)
+                mse_real_s = str(mse_real)
 
-        completed.add(key)
-        state['completed_in_cycle'] = list(completed)
-        state['pos'] = int(idx) + 1
-        state['trained_total'] = int(state.get('trained_total', 0)) + 1
-        state['ts'] = _now_ts()
+            print(
+                f"[GRU] run={state.get('run_id', 1)} total_cycles={lifetime.get('cycles_completed', 0)} total_trained={lifetime.get('trained_total', 0)} "
+                f"cycle={state.get('cycle', 0)} {len(completed)}/{len(universe)} {market_type}:{code} status=ok loss={loss_s} val_loss={val_s} mse_scaled={mse_scaled_s} mse_real={mse_real_s}",
+                flush=True,
+            )
 
-        lifetime['trained_total'] = int(lifetime.get('trained_total', 0)) + 1
-        _save_lifetime(paths, lifetime)
+            since_save += 1
+            if since_save >= save_every:
+                since_save = 0
 
-        model.save_weights(str(paths['latest_weights']))
+            steps_left -= 1
+    except KeyboardInterrupt:
+        interrupted = True
+        print("[WARN] training interrupted by user; saving state/weights.", flush=True)
+    finally:
+        _save_weights_safe(model, paths['latest_weights'])
         _save_state(paths, state)
-
-        try:
-            loss_s = f"{loss:.6f}" if loss is not None else "None"
-            val_s = f"{val_loss:.6f}" if val_loss is not None else "None"
-        except Exception:
-            loss_s = str(loss)
-            val_s = str(val_loss)
-
-        try:
-            mse_scaled_s = f"{mse_scaled:.6f}" if mse_scaled is not None else "None"
-            mse_real_s = f"{mse_real:.6f}" if mse_real is not None else "None"
-        except Exception:
-            mse_scaled_s = str(mse_scaled)
-            mse_real_s = str(mse_real)
-
-        print(
-            f"[GRU] run={state.get('run_id', 1)} total_cycles={lifetime.get('cycles_completed', 0)} total_trained={lifetime.get('trained_total', 0)} "
-            f"cycle={state.get('cycle', 0)} {len(completed)}/{len(universe)} {market_type}:{code} status=ok loss={loss_s} val_loss={val_s} mse_scaled={mse_scaled_s} mse_real={mse_real_s}",
-            flush=True,
-        )
-
-        since_save += 1
-        if since_save >= save_every:
-            since_save = 0
-
-        steps_left -= 1
-
-    model.save_weights(str(paths['latest_weights']))
-    _save_state(paths, state)
+        if interrupted:
+            print("[INFO] training stopped safely.", flush=True)

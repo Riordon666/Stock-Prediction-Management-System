@@ -82,6 +82,17 @@ var tickerRafId = 0;
 
 var autoFetchTimerId = 0;
 
+var latestNewsRetryTimer = 0;
+var latestNewsRetryCount = 0;
+var tickerRetryTimer = 0;
+var tickerRetryCount = 0;
+
+var NEWS_FAST_MODE = true;
+var NEWS_RETRY_DELAY_MS = 1800;
+var NEWS_MAX_RETRIES = 2;
+var TICKER_RETRY_DELAY_MS = 1800;
+var TICKER_MAX_RETRIES = 1;
+
 function triggerRefreshBtnAnimation(btn) {
     const $btn = $(btn);
 
@@ -275,6 +286,48 @@ function escapeHtml(input) {
         .replace(/'/g, '&#39;');
 }
 
+function scheduleLatestNewsRetry() {
+    if (latestNewsRetryCount >= NEWS_MAX_RETRIES) {
+        return;
+    }
+    if (latestNewsRetryTimer) {
+        clearTimeout(latestNewsRetryTimer);
+    }
+    latestNewsRetryCount += 1;
+    latestNewsRetryTimer = setTimeout(function () {
+        loadLatestNews(true, true);
+    }, NEWS_RETRY_DELAY_MS);
+}
+
+function clearLatestNewsRetry() {
+    if (latestNewsRetryTimer) {
+        clearTimeout(latestNewsRetryTimer);
+    }
+    latestNewsRetryTimer = 0;
+    latestNewsRetryCount = 0;
+}
+
+function scheduleTickerRetry() {
+    if (tickerRetryCount >= TICKER_MAX_RETRIES) {
+        return;
+    }
+    if (tickerRetryTimer) {
+        clearTimeout(tickerRetryTimer);
+    }
+    tickerRetryCount += 1;
+    tickerRetryTimer = setTimeout(function () {
+        startTickerNews(true);
+    }, TICKER_RETRY_DELAY_MS);
+}
+
+function clearTickerRetry() {
+    if (tickerRetryTimer) {
+        clearTimeout(tickerRetryTimer);
+    }
+    tickerRetryTimer = 0;
+    tickerRetryCount = 0;
+}
+
 // 加载最新新闻函数
 var lastNewsList = [];
 var isNewsExpanded = false;
@@ -287,12 +340,16 @@ function isMobileView() {
     }
 }
 
-function loadLatestNews(silent = false) {
+function loadLatestNews(silent = false, isRetry = false) {
+    if (!isRetry) {
+        clearLatestNewsRetry();
+    }
     if (!silent) {
         $('#news-timeline').html('<div class="portal-loading">加载新闻中...</div>');
     }
 
     const onlyImportant = $('#only-important').is(':checked');
+    const useFastMode = NEWS_FAST_MODE;
 
     $.ajax({
         url: '/api/latest_news',
@@ -300,16 +357,25 @@ function loadLatestNews(silent = false) {
         data: {
             days: 2,
             limit: 500,
-            important: onlyImportant ? 1 : 0
+            important: onlyImportant ? 1 : 0,
+            fast: useFastMode ? 1 : 0
         },
         success: function(response) {
             if (response.success && response.news && response.news.length > 0) {
                 lastNewsList = response.news;
                 displayNewsTimeline(response.news);
+                clearLatestNewsRetry();
             } else {
                 lastNewsList = [];
                 if (!silent) {
-                    $('#news-timeline').html('<div class="portal-empty">暂无最新新闻</div>');
+                    if (useFastMode) {
+                        $('#news-timeline').html('<div class="portal-loading">加载新闻中...</div>');
+                    } else {
+                        $('#news-timeline').html('<div class="portal-empty">暂无最新新闻</div>');
+                    }
+                }
+                if (useFastMode) {
+                    scheduleLatestNewsRetry();
                 }
             }
         },
@@ -318,6 +384,9 @@ function loadLatestNews(silent = false) {
             lastNewsList = [];
             if (!silent) {
                 $('#news-timeline').html('<div class="portal-empty">获取新闻失败，请稍后重试</div>');
+            }
+            if (useFastMode) {
+                scheduleLatestNewsRetry();
             }
         }
     });
@@ -617,24 +686,36 @@ function displayTickerNews(newsList) {
 }
 
 // 启动滚动新闻
-function startTickerNews() {
+function startTickerNews(isRetry = false) {
+    if (!isRetry) {
+        clearTickerRetry();
+    }
+    const useFastMode = NEWS_FAST_MODE;
     $.ajax({
         url: '/api/latest_news',
         method: 'GET',
         data: {
             days: 1,
-            limit: 3
+            limit: 3,
+            fast: useFastMode ? 1 : 0
         },
         success: function(response) {
             if (response.success && response.news && response.news.length > 0) {
                 displayTickerNews(response.news);
+                clearTickerRetry();
             } else {
                 $('#ticker-container .ticker-wrapper').html('<div class="ticker-item">暂无最新消息</div>');
+                if (useFastMode) {
+                    scheduleTickerRetry();
+                }
             }
         },
         error: function(err) {
             console.error('获取滚动新闻失败:', err);
             $('#ticker-container .ticker-wrapper').html('<div class="ticker-item">获取最新消息失败</div>');
+            if (useFastMode) {
+                scheduleTickerRetry();
+            }
         }
     });
 }

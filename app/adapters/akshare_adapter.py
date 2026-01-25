@@ -12,6 +12,7 @@ import re
 import time
 import urllib.parse
 import urllib.request
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Optional
 from .base_adapter import BaseAdapter
 
@@ -25,6 +26,10 @@ class AkshareAdapter(BaseAdapter):
     _SPOT_CACHE_TTL_SECONDS = 6 * 60 * 60
     _SPOT_CACHE_EMPTY_TTL_SECONDS = 10 * 60
     _YAHOO_NAME_TTL_SECONDS = 7 * 24 * 60 * 60
+    _HK_HIST_FAIL_WINDOW_SECONDS = 120
+    _HK_HIST_FAIL_LIMIT = 3
+    _HK_HIST_BLOCK_SECONDS = 600
+    _HK_HIST_TIMEOUT_SECONDS = 8
 
     # 字段映射：统一不同数据源的返回格式
     FIELD_MAPPING = {
@@ -84,6 +89,248 @@ class AkshareAdapter(BaseAdapter):
             return func(**call_kwargs)
         except Exception:
             return None
+
+    def _format_date_dash(self, date_str: str) -> str:
+        if not date_str:
+            return ''
+        s = str(date_str).strip()
+        if not s:
+            return ''
+        try:
+            if len(s) == 8 and s.isdigit():
+                return f"{s[:4]}-{s[4:6]}-{s[6:]}"
+            dt = pd.to_datetime(s, errors='coerce')
+            if pd.isna(dt):
+                return s
+            if isinstance(dt, pd.Timestamp):
+                dt = dt.to_pydatetime()
+            return dt.strftime('%Y-%m-%d')
+        except Exception:
+            return s
+
+    def _fetch_hk_history_tencent(self, code: str, start_date: str, end_date: str) -> pd.DataFrame:
+        hk_code = self._format_code_for_hk(code)
+        if not hk_code:
+            return pd.DataFrame()
+
+        symbol = f"hk{hk_code}"
+        start_s = self._format_date_dash(start_date)
+        end_s = self._format_date_dash(end_date)
+        count = 640
+        try:
+            start_dt = pd.to_datetime(start_s, errors='coerce')
+            end_dt = pd.to_datetime(end_s, errors='coerce')
+            if pd.notna(start_dt) and pd.notna(end_dt):
+                days = int((end_dt - start_dt).days) + 5
+                count = max(120, min(max(days, 120), 1000))
+        except Exception:
+            pass
+
+        params = f"{symbol},day,{start_s},{end_s},{count},qfq"
+        url = (
+            'https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param='
+            f"{urllib.parse.quote(params)}"
+        )
+        try:
+            req = urllib.request.Request(
+                url,
+                headers={
+                    'User-Agent': 'Mozilla/5.0',
+                    'Accept': 'application/json,text/plain,*/*',
+                },
+                method='GET',
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                raw = resp.read().decode('utf-8', errors='ignore')
+        except Exception:
+            return pd.DataFrame()
+
+        raw = (raw or '').strip()
+        if not raw:
+            return pd.DataFrame()
+        if not raw.startswith('{'):
+            match = re.search(r'(\{.*\})', raw, re.S)
+            if not match:
+                return pd.DataFrame()
+            raw = match.group(1)
+        try:
+            payload = json.loads(raw)
+        except Exception:
+            return pd.DataFrame()
+
+        data = payload.get('data') if isinstance(payload, dict) else None
+        if not isinstance(data, dict) or not data:
+            return pd.DataFrame()
+
+        entry = data.get(symbol) or data.get(symbol.lower()) or data.get(symbol.upper())
+        if not isinstance(entry, dict) and data:
+            entry = next(iter(data.values()))
+        if not isinstance(entry, dict):
+            return pd.DataFrame()
+
+        rows = entry.get('qfqday') or entry.get('day') or []
+        if not rows:
+            return pd.DataFrame()
+
+        out_rows = []
+        for row in rows:
+            if not isinstance(row, list) or len(row) < 6:
+                continue
+            out_rows.append({
+                'date': row[0],
+                'open': row[1],
+                'close': row[2],
+                'high': row[3],
+                'low': row[4],
+                'volume': row[5],
+                'amount': row[6] if len(row) > 6 else None,
+            })
+        if not out_rows:
+            return pd.DataFrame()
+
+        df = pd.DataFrame(out_rows)
+        df['date'] = pd.to_datetime(df['date'], errors='coerce')
+        df['close'] = pd.to_numeric(df['close'], errors='coerce')
+        df = df.dropna(subset=['date', 'close'])
+        if start_s:
+            start_dt = pd.to_datetime(start_s, errors='coerce')
+            if pd.notna(start_dt):
+                df = df[df['date'] >= start_dt]
+        if end_s:
+            end_dt = pd.to_datetime(end_s, errors='coerce')
+            if pd.notna(end_dt):
+                df = df[df['date'] <= end_dt]
+        return df
+
+    def _hk_hist_is_blocked(self) -> bool:
+        now = time.time()
+        return now < float(getattr(self, '_hk_hist_block_until', 0.0) or 0.0)
+
+    def _record_hk_hist_failure(self, err: Exception) -> None:
+        now = time.time()
+        last_ts = float(getattr(self, '_hk_hist_last_fail_ts', 0.0) or 0.0)
+        count = int(getattr(self, '_hk_hist_fail_count', 0))
+        if now - last_ts > self._HK_HIST_FAIL_WINDOW_SECONDS:
+            count = 0
+        count += 1
+        self._hk_hist_last_fail_ts = now
+        self._hk_hist_fail_count = count
+        if count >= self._HK_HIST_FAIL_LIMIT:
+            self._hk_hist_block_until = now + float(self._HK_HIST_BLOCK_SECONDS)
+            logger.warning(
+                "HK history blocked for %ss after %d failures; last_error=%s",
+                int(self._HK_HIST_BLOCK_SECONDS),
+                count,
+                err,
+            )
+
+    def _reset_hk_hist_failures(self) -> None:
+        self._hk_hist_fail_count = 0
+        self._hk_hist_last_fail_ts = 0.0
+        self._hk_hist_block_until = 0.0
+
+    def _to_epoch_seconds(self, date_str: str, end_of_day: bool = False) -> Optional[int]:
+        if not date_str:
+            return None
+        s = str(date_str).strip()
+        if not s:
+            return None
+        try:
+            if len(s) == 8 and s.isdigit():
+                dt = datetime.strptime(s, '%Y%m%d')
+            else:
+                dt = pd.to_datetime(s, errors='coerce')
+                if pd.isna(dt):
+                    return None
+                if isinstance(dt, pd.Timestamp):
+                    dt = dt.to_pydatetime()
+            if end_of_day:
+                dt = dt + timedelta(days=1)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return int(dt.timestamp())
+        except Exception:
+            return None
+
+    def _fetch_hk_history_yahoo(self, code: str, start_date: str, end_date: str) -> pd.DataFrame:
+        hk_code = self._format_code_for_hk(code)
+        if not hk_code:
+            return pd.DataFrame()
+
+        start_ts = self._to_epoch_seconds(start_date, end_of_day=False)
+        end_ts = self._to_epoch_seconds(end_date, end_of_day=True)
+        if not start_ts or not end_ts:
+            return pd.DataFrame()
+
+        symbol = f"{hk_code}.HK"
+        params = {
+            'period1': str(start_ts),
+            'period2': str(end_ts),
+            'interval': '1d',
+            'events': 'history',
+            'includeAdjustedClose': 'true',
+        }
+        url = (
+            'https://query1.finance.yahoo.com/v8/finance/chart/'
+            f"{urllib.parse.quote(symbol)}?{urllib.parse.urlencode(params)}"
+        )
+
+        try:
+            req = urllib.request.Request(
+                url,
+                headers={
+                    'User-Agent': 'Mozilla/5.0',
+                    'Accept': 'application/json,text/plain,*/*',
+                },
+                method='GET',
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                raw = resp.read().decode('utf-8', errors='ignore')
+            payload = json.loads(raw) if raw else {}
+        except Exception:
+            return pd.DataFrame()
+
+        result_list = (payload.get('chart') or {}).get('result') or []
+        if not result_list:
+            return pd.DataFrame()
+        result = result_list[0] if isinstance(result_list[0], dict) else {}
+        timestamps = result.get('timestamp') or []
+        if not timestamps:
+            return pd.DataFrame()
+
+        indicators = result.get('indicators') or {}
+        quote = (indicators.get('quote') or [{}])
+        quote = quote[0] if quote else {}
+        adj = (indicators.get('adjclose') or [{}])
+        adj = adj[0] if adj else {}
+
+        n = len(timestamps)
+
+        def _slice(vals):
+            if not isinstance(vals, list):
+                return [None] * n
+            if len(vals) < n:
+                return vals + [None] * (n - len(vals))
+            return vals[:n]
+
+        close_vals = _slice(adj.get('adjclose'))
+        if not any(v is not None for v in close_vals):
+            close_vals = _slice(quote.get('close'))
+
+        df = pd.DataFrame({
+            'date': pd.to_datetime(timestamps, unit='s', utc=True).tz_convert(None),
+            'open': _slice(quote.get('open')),
+            'high': _slice(quote.get('high')),
+            'low': _slice(quote.get('low')),
+            'close': close_vals,
+            'volume': _slice(quote.get('volume')),
+        })
+        if df.empty:
+            return df
+        df['close'] = pd.to_numeric(df['close'], errors='coerce')
+        df = df.dropna(subset=['close'])
+        df['amount'] = None
+        return df
 
     def _pick_first_value(self, info: Dict, keys: List[str]) -> str:
         for k in keys:
@@ -402,19 +649,33 @@ class AkshareAdapter(BaseAdapter):
 
         if mt == 'HK':
             hk_code = self._format_code_for_hk(code)
-            try:
-                df = ak.stock_hk_hist(
-                    symbol=hk_code,
-                    period="daily",
-                    start_date=start_date,
-                    end_date=end_date,
-                    adjust=adjust or "",
-                )
-                if df is not None and not df.empty:
-                    df = df.rename(columns=self.FIELD_MAPPING['stock_hk_hist'])
-                    return df
-            except Exception:
-                pass
+            if not self._hk_hist_is_blocked():
+                try:
+                    params = {
+                        'symbol': hk_code,
+                        'period': 'daily',
+                        'start_date': start_date,
+                        'end_date': end_date,
+                        'adjust': adjust or "",
+                    }
+                    sig = inspect.signature(ak.stock_hk_hist)
+                    if 'timeout' in sig.parameters:
+                        params['timeout'] = int(self._HK_HIST_TIMEOUT_SECONDS)
+                    df = ak.stock_hk_hist(**params)
+                    if df is not None and not df.empty:
+                        self._reset_hk_hist_failures()
+                        df = df.rename(columns=self.FIELD_MAPPING['stock_hk_hist'])
+                        return df
+                except Exception as exc:
+                    self._record_hk_hist_failure(exc)
+
+            df = self._fetch_hk_history_tencent(hk_code, start_date, end_date)
+            if df is not None and not df.empty:
+                return df
+
+            df = self._fetch_hk_history_yahoo(hk_code, start_date, end_date)
+            if df is not None and not df.empty:
+                return df
             return pd.DataFrame()
 
         if mt == 'US':
@@ -588,6 +849,7 @@ class AkshareAdapter(BaseAdapter):
 
     def get_board_stocks(self, board: str) -> List[str]:
         """获取板块股票列表"""
+        board_key = (board or '').strip().lower()
         board_map = {
             'all': 'stock_zh_a_spot_em',
             'sh': 'stock_sh_a_spot_em',
@@ -596,18 +858,50 @@ class AkshareAdapter(BaseAdapter):
             'cyb': 'stock_cy_a_spot_em',
             'kcb': 'stock_kc_a_spot_em',
         }
-        func_name = board_map.get(board)
+        func_name = board_map.get(board_key)
         if not func_name:
             return []
 
-        try:
-            func = getattr(ak, func_name)
-            df = func()
-            if df is not None and not df.empty:
-                col = '代码' if '代码' in df.columns else df.columns[0]
-                return df[col].tolist()
-        except Exception:
-            pass
+        candidates: List[str] = []
+
+        def _add_candidate(name: str) -> None:
+            if name and name not in candidates:
+                candidates.append(name)
+
+        _add_candidate(func_name)
+        if func_name.endswith('_em'):
+            _add_candidate(func_name[:-3])
+        else:
+            _add_candidate(f"{func_name}_em")
+
+        prefix_map = {
+            'all': 'stock_zh_a_spot',
+            'sh': 'stock_sh_a_spot',
+            'sz': 'stock_sz_a_spot',
+            'bj': 'stock_bj_a_spot',
+            'cyb': 'stock_cy_a_spot',
+            'kcb': 'stock_kc_a_spot',
+        }
+        prefix = prefix_map.get(board_key)
+        if prefix:
+            for name in dir(ak):
+                if name.lower().startswith(prefix.lower()):
+                    _add_candidate(name)
+
+        for fname in candidates:
+            func = getattr(ak, fname, None)
+            if not callable(func):
+                continue
+            df = self._safe_call_ak(func)
+            if df is None or not isinstance(df, pd.DataFrame) or df.empty:
+                continue
+            col = '代码' if '代码' in df.columns else df.columns[0]
+            codes = [str(x).strip() for x in df[col].tolist() if str(x).strip()]
+            if codes:
+                return codes
+
+        if candidates:
+            logger.warning("A board stocks empty for board=%s; tried=%s", board, candidates[:10])
         return []
 
     def get_industry_list(self) -> pd.DataFrame:

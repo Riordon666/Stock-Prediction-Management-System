@@ -1,6 +1,6 @@
 {
-  "ts": 1768736610.826095,
-  "universe_key": "d93b3509ba58697dec657337faf8f185b547455c4c2fba5f8d03cd7e6b45c31b",
+  "ts": 1769321870.9093509,
+  "universe_key": "d7bd3be9e6b18f389c03837b4dd0f57af0c99c3d47370a57c08564ff65e41b6e",
   "universe_size": 1800,
   "lookback": 30,
   "total_days": 50,
@@ -10,6 +10,6 @@
     "dropout": 0.2,
     "learning_rate": 0.001
   },
-  "run_id": 4,
+  "run_id": 10,
   "autoregressive_training": true
 }
