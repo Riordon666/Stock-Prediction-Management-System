@@ -39,13 +39,20 @@ Stock Prediction Management System/
 │  ├─ core/
 │  │  ├─ database.py            # 数据库管理
 │  │  ├─ data_provider.py       # 统一数据提供层（多数据源故障转移）
-│  │  └─ fallback_manager.py    # 故障转移管理器
+│  │  ├─ fallback_manager.py    # 故障转移管理器
+│  │  └─ news_fetcher.py        # 新闻抓取与本地缓存（财联社电报）
 │  └─ adapters/
+│     ├─ __init__.py            # 适配器导出
 │     ├─ akshare_adapter.py     # akshare 适配器
 │     ├─ baostock_adapter.py    # baostock 适配器
 │     └─ base_adapter.py        # 适配器基类
 ├─ data/
 │  └─ logs/                     # 服务日志（默认输出到这里）
+│  └─ news/                     # 快讯缓存（news_YYYYMMDD.json）
+├─ forecasting/
+│  ├─ train_gru.py              # GRU 训练脚本
+│  ├─ test_gru.py               # GRU 测试脚本
+│  └─ models/                   # 预测模型（GRU）目录
 └─ run.py                       # 入口：启动 Flask 服务
 ```
 
