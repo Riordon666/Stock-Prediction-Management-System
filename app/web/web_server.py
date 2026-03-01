@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-基础Web服务器架构 - 股票智能分析系统
+基础Web服务器架构 - 基于Flask的股票预测管理系统设计与实现
 版本：v1.0.0
 """
 import os
@@ -21,6 +21,7 @@ from flask import Flask, render_template, request, jsonify
 
 import numpy as np
 import pandas as pd
+from datetime import datetime, timedelta
 
 # 环境变量加载
 from dotenv import load_dotenv
@@ -104,14 +105,32 @@ _progress_lock = threading.Lock()
 _progress_store: Dict[str, Dict[str, Any]] = {}
 
 _hotspot_lock = threading.Lock()
-_hotspot_cache: Dict[str, Any] = {
-    'ts': 0.0,
-    'fail_ts': 0.0,
-    'items': [],
-    'source': '',
-}
+_HOTSPOT_CACHE_FILE = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'hotspot_cache.json'))
+
+def _load_hotspot_cache() -> Dict[str, Any]:
+    try:
+        if os.path.exists(_HOTSPOT_CACHE_FILE):
+            with open(_HOTSPOT_CACHE_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return {'ts': 0.0, 'fail_ts': 0.0, 'items': [], 'source': ''}
+
+def _save_hotspot_cache(cache_data: Dict[str, Any]) -> None:
+    try:
+        os.makedirs(os.path.dirname(_HOTSPOT_CACHE_FILE), exist_ok=True)
+        with open(_HOTSPOT_CACHE_FILE, 'w', encoding='utf-8') as f:
+            json.dump(cache_data, f, ensure_ascii=False)
+    except Exception as e:
+        logger.warning('Failed to save hotspot cache: %s', e)
 
 _gru_model_cache: Dict[str, Any] = {
+    'model': None,
+    'meta': None,
+    'mtime': 0.0,
+}
+
+_lstm_model_cache: Dict[str, Any] = {
     'model': None,
     'meta': None,
     'mtime': 0.0,
@@ -341,12 +360,19 @@ def _fetch_tophub_today_hotspots(limit: int) -> Dict[str, Any]:
 
         out: list[Dict[str, str]] = []
         seen = set()
+        
+        ignore_titles = {
+            '今日热榜', '首页', '晚报', '动态', '追踪', '榜中榜', '热文库', 
+            '话题', '日历', '综合', '搜索', '登录', '注册', '发现', '推荐'
+        }
 
         # Markdown links
         for m in re.finditer(r'\[(?P<title>[^\]]+?)\]\((?P<link>[^\)\s]+)\)', raw):
             title = _sanitize_hotspot_title(m.group('title'))
             link = _normalize_hotspot_url(m.group('link'))
             if not title or not link or _is_hotspot_image_url(link):
+                continue
+            if title in ignore_titles or len(title) < 3:
                 continue
             key = (title, link)
             if key in seen:
@@ -364,6 +390,8 @@ def _fetch_tophub_today_hotspots(limit: int) -> Dict[str, Any]:
                 title_text = re.sub(r'<[^>]+>', ' ', title_html)
                 title = _sanitize_hotspot_title(title_text)
                 if not title or not link or _is_hotspot_image_url(link):
+                    continue
+                if title in ignore_titles or len(title) < 3:
                     continue
                 key = (title, link)
                 if key in seen:
@@ -447,17 +475,19 @@ def api_hotspots():
 
     now = time.time()
     with _hotspot_lock:
-        cached_ts = float(_hotspot_cache.get('ts') or 0.0)
-        cached_fail_ts = float(_hotspot_cache.get('fail_ts') or 0.0)
-        cached_items = _hotspot_cache.get('items')
-        cached_source = _hotspot_cache.get('source') or ''
+        cache_data = _load_hotspot_cache()
+        cached_ts = float(cache_data.get('ts') or 0.0)
+        cached_fail_ts = float(cache_data.get('fail_ts') or 0.0)
+        cached_items = cache_data.get('items') or []
+        cached_source = cache_data.get('source') or ''
 
         cleaned_cached = _clean_hotspot_items(cached_items, limit)
         if cleaned_cached and cleaned_cached != cached_items:
-            _hotspot_cache['items'] = cleaned_cached
+            cache_data['items'] = cleaned_cached
+            _save_hotspot_cache(cache_data)
             cached_items = cleaned_cached
 
-        if isinstance(cached_items, list) and cached_items and (now - cached_ts < 300):
+        if isinstance(cached_items, list) and len(cached_items) > 0 and (now - cached_ts < 300):
             return jsonify({
                 'success': True,
                 'items': cached_items,
@@ -482,17 +512,20 @@ def api_hotspots():
     items = _clean_hotspot_items(items, limit)
 
     with _hotspot_lock:
-        cached_items = _hotspot_cache.get('items')
-        cached_source = _hotspot_cache.get('source') or ''
+        cache_data = _load_hotspot_cache()
+        cached_items = cache_data.get('items') or []
+        cached_source = cache_data.get('source') or ''
 
         # Only cache non-empty results; keep last non-empty as fallback.
         if items:
-            _hotspot_cache['ts'] = now
-            _hotspot_cache['items'] = items
-            _hotspot_cache['source'] = source
-            _hotspot_cache['fail_ts'] = 0.0
+            cache_data['ts'] = now
+            cache_data['items'] = items
+            cache_data['source'] = source
+            cache_data['fail_ts'] = 0.0
+            _save_hotspot_cache(cache_data)
         else:
-            _hotspot_cache['fail_ts'] = now
+            cache_data['fail_ts'] = now
+            _save_hotspot_cache(cache_data)
             if isinstance(cached_items, list) and cached_items:
                 items = cached_items
                 source = cached_source
@@ -639,8 +672,8 @@ def _forecasting_root() -> Path:
     return Path(__file__).resolve().parents[2] / 'forecasting'
 
 
-def _gru_paths() -> Dict[str, Path]:
-    root = _forecasting_root() / 'models' / 'gru'
+def _model_paths(model_type: str = 'gru') -> Dict[str, Path]:
+    root = _forecasting_root() / 'models' / model_type.lower()
     ckpt = root / 'checkpoints'
     return {
         'root': root,
@@ -648,9 +681,8 @@ def _gru_paths() -> Dict[str, Path]:
         'weights': ckpt / 'latest.weights.h5',
     }
 
-
-def _load_gru_meta() -> Dict[str, Any]:
-    p = _gru_paths()['meta']
+def _load_model_meta(model_type: str = 'gru') -> Dict[str, Any]:
+    p = _model_paths(model_type)['meta']
     if not p.exists():
         return {}
     try:
@@ -967,11 +999,16 @@ def _manual_load_gru_weights_from_h5(model: Any, weights_path: Path) -> bool:
         return False
 
 
-def _load_gru_model() -> Any:
-    paths = _gru_paths()
+def _load_prediction_model(model_type: str = 'gru') -> Any:
+    model_type = model_type.lower()
+    if model_type not in {'gru', 'lstm'}:
+        raise ValueError(f'Unsupported model type: {model_type}')
+
+    cache = _gru_model_cache if model_type == 'gru' else _lstm_model_cache
+    paths = _model_paths(model_type)
     weights = paths['weights']
     if not weights.exists():
-        raise FileNotFoundError(str(weights))
+        raise FileNotFoundError(f'未找到 {model_type.upper()} 模型权重文件，请先开始训练或上传权重。')
 
     try:
         size = int(weights.stat().st_size)
@@ -990,129 +1027,64 @@ def _load_gru_model() -> Any:
     is_hdf5 = (len(head) >= 8 and head[:8] == b'\x89HDF\r\n\x1a\n')
 
     mtime = float(weights.stat().st_mtime)
-    if _gru_model_cache.get('model') is not None and float(_gru_model_cache.get('mtime') or 0.0) >= mtime:
-        return _gru_model_cache.get('model')
+    if cache.get('model') is not None and float(cache.get('mtime') or 0.0) >= mtime:
+        return cache.get('model')
 
-    meta = _load_gru_meta()
+    meta = _load_model_meta(model_type)
     lookback = int(meta.get('lookback') or 30)
 
     try:
         import tensorflow as tf
-
         tf.keras.backend.clear_session()
     except Exception:
         pass
 
     model_cfg = meta.get('model') or {}
-
-    units = int(model_cfg.get('units') or 50)
+    units = int(model_cfg.get('units') or (50 if model_type == 'gru' else 128))
     layers = int(model_cfg.get('layers') or 3)
-    dropout = float(model_cfg.get('dropout') or 0.2)
+    dropout = float(model_cfg.get('dropout') or (0.2 if model_type != 'lstm' else 0.5))
     learning_rate = float(model_cfg.get('learning_rate') or 0.001)
-
-    h5_layer_names = _read_h5_layer_names(weights)
-    gru_names = [n for n in h5_layer_names if n.startswith('gru')]
-    dense_names = [n for n in h5_layer_names if n.startswith('dense')]
-
-    try:
-        logger.info(
-            'gru weights h5 layer_names=%s gru_candidates=%s dense_candidates=%s',
-            h5_layer_names[:20],
-            gru_names[:10],
-            dense_names[:10],
-        )
-    except Exception:
-        pass
+    feature_count = int(meta.get('feature_count') or 1)
+    feature_cols = meta.get('feature_cols') or ['close']
 
     model = None
-    if len(gru_names) >= int(layers) and dense_names:
-        try:
-            logger.info('gru weights: using named model build for loading')
-        except Exception:
-            pass
-        model = _build_gru_regression_model_named(
-            lookback=lookback,
-            units=units,
-            layers=layers,
-            dropout=dropout,
-            learning_rate=learning_rate,
-            gru_layer_names=gru_names[: int(layers)],
-            dense_layer_name=dense_names[0],
-        )
-    else:
-        try:
-            logger.info('gru weights: using fallback model build for loading')
-        except Exception:
-            pass
+    if model_type == 'gru':
         from forecasting.models.gru.model import build_gru_regression_model
+        model = build_gru_regression_model(lookback=lookback, feature_count=feature_count, units=units, layers=layers, dropout=dropout, learning_rate=learning_rate)
+    elif model_type == 'lstm':
+        from forecasting.models.lstm.model import build_lstm_regression_model
+        model = build_lstm_regression_model(lookback=lookback, feature_count=feature_count, units=units, layers=layers, dropout=dropout, learning_rate=learning_rate)
 
-        model = build_gru_regression_model(
-            lookback=lookback,
-            units=units,
-            layers=layers,
-            dropout=dropout,
-            learning_rate=learning_rate,
-        )
+    if model is None:
+        raise ValueError(f"Failed to build model for type: {model_type}")
 
-    warmup_x = np.zeros((1, int(lookback), 1), dtype=np.float32)
     try:
-        model.build((None, int(lookback), 1))
+        model.build((None, int(lookback), feature_count))
     except Exception:
         pass
 
-    try:
-        _ = model(warmup_x, training=False)
-    except Exception as e:
-        logger.warning('gru model warmup forward failed: %s', e)
-
-    try:
-        import tensorflow as tf
-
-        gru_layers = [l for l in getattr(model, 'layers', []) if isinstance(l, tf.keras.layers.GRU)]
-        if gru_layers:
-            g0 = gru_layers[0]
-            cell_w = getattr(getattr(g0, 'cell', None), 'weights', None)
-            cell_w_len = len(cell_w) if cell_w is not None else -1
-            logger.info(
-                'gru warmup done: model_weights=%s gru_layer=%s gru_weights=%s cell_weights=%s',
-                len(getattr(model, 'weights', []) or []),
-                getattr(g0, 'name', ''),
-                len(getattr(g0, 'weights', []) or []),
-                cell_w_len,
-            )
-    except Exception:
-        pass
-
-    if not getattr(model, 'weights', None):
-        raise ValueError('GRU模型初始化失败：模型变量未创建，无法加载权重（可能是TensorFlow/Keras版本不兼容）')
     try:
         model.load_weights(str(weights))
     except Exception as e:
-        try:
-            if _manual_load_gru_weights_from_h5(model, weights):
-                _gru_model_cache['model'] = model
-                _gru_model_cache['meta'] = meta
-                _gru_model_cache['mtime'] = mtime
+        if model_type == 'gru':
+             if _manual_load_gru_weights_from_h5(model, weights):
+                cache['model'] = model
+                cache['meta'] = meta
+                cache['mtime'] = mtime
                 return model
-        except Exception:
-            pass
-        raise ValueError(
-            'GRU模型权重加载失败：权重文件可能已损坏/格式不匹配。'
-            '请在服务器上重新训练一次 GRU，或将本地训练产物 forecasting/models/gru/checkpoints/latest.weights.h5 '
-            '拷贝到服务器同路径后重启服务。'
-            f' (path={weights}; size={size}; hdf5={is_hdf5}; detail={type(e).__name__}: {e})'
-        )
+        raise ValueError(f'{model_type.upper()} 模型权重加载失败: {e}')
 
-    _gru_model_cache['model'] = model
-    _gru_model_cache['meta'] = meta
-    _gru_model_cache['mtime'] = mtime
+    cache['model'] = model
+    cache['meta'] = meta
+    cache['mtime'] = mtime
     return model
 
 
-@app.route('/api/predict_gru')
-def api_predict_gru():
+@app.route('/api/predict_stock')
+def api_predict_stock():
     stock_code = (request.args.get('stock_code') or '').strip()
     market_type = (request.args.get('market_type') or 'A').strip().upper()
+    model_type = (request.args.get('model_type') or 'gru').strip().lower()
     try:
         predict_days = int(request.args.get('days') or 10)
     except Exception:
@@ -1120,39 +1092,76 @@ def api_predict_gru():
 
     if not stock_code:
         return jsonify({'success': False, 'error': 'stock_code不能为空'}), 400
-    if market_type not in {'A', 'HK', 'US'}:
-        return jsonify({'success': False, 'error': '不支持的市场类型'}), 400
-    if predict_days not in {10, 20, 30}:
-        return jsonify({'success': False, 'error': 'days只支持10/20/30'}), 400
+    if model_type not in {'gru', 'lstm'}:
+        return jsonify({'success': False, 'error': '不支持的模型类型'}), 400
 
     code = _normalize_predict_code(stock_code, market_type)
 
     try:
-        model = _load_gru_model()
-        meta = dict(_gru_model_cache.get('meta') or {})
+        model = _load_prediction_model(model_type)
+        cache = _gru_model_cache if model_type == 'gru' else _lstm_model_cache
+        meta = dict(cache.get('meta') or {})
         lookback = int(meta.get('lookback') or 30)
+        total_days = int(meta.get('total_days') or 50)
+        feature_cols = meta.get('feature_cols') or ['close']
 
-        df = _fetch_last_close_n(code, market_type, days=int(lookback))
-        if df.empty or len(df) < lookback:
-            return jsonify({'success': False, 'error': '历史数据不足，无法预测'}), 400
+        # 获取更长的数据以支持特征工程
+        fetch_days = total_days + 60
+        end = datetime.now().date()
+        start = end - timedelta(days=fetch_days * 2)
 
-        close = df['close'].to_numpy(dtype=np.float32)
-        scaled_pack = _minmax_scale_1d(close)
-        series_scaled = scaled_pack['scaled']
-        x_min = float(scaled_pack['x_min'])
-        x_max = float(scaled_pack['x_max'])
+        provider = get_data_provider()
+        df_raw = provider.get_stock_history(code=code, start_date=start.strftime('%Y%m%d'),
+                                            end_date=end.strftime('%Y%m%d'), adjust='qfq', market_type=market_type)
+        
+        if df_raw is None or df_raw.empty:
+            return jsonify({'success': False, 'error': f'无法获取 {code} 的历史数据'}), 400
 
-        window = series_scaled[-lookback:].astype(np.float32).copy()
+        # 特征工程
+        from forecasting.core.feature_engine import get_feature_engine
+        engine = get_feature_engine()
+        df = engine.prepare_features(df_raw, include_sentiment=True)
+        
+        # 截取最后的窗口
+        df = df.tail(total_days).reset_index(drop=True)
+        if len(df) < lookback:
+            return jsonify({'success': False, 'error': f'特征处理后数据量不足 ({len(df)}/{lookback})'}), 400
+
+        # 归一化多列
+        df_scaled = df.copy()
+        scaling_meta = {}
+        for col in feature_cols:
+            vals = df[col].values
+            v_min, v_max = float(np.min(vals)), float(np.max(vals))
+            denom = v_max - v_min
+            if denom < 1e-12:
+                df_scaled[col] = 0.0
+            else:
+                df_scaled[col] = (vals - v_min) / denom
+            scaling_meta[col] = (v_min, v_max)
+
+        x_min, x_max = scaling_meta['close']
+
+        # 预测循环
+        features_scaled = df_scaled[feature_cols].values.astype(np.float32)
+        window = features_scaled[-lookback:].copy()
 
         preds_real: list[float] = []
         for _ in range(int(predict_days)):
-            x = window.reshape((1, lookback, 1)).astype(np.float32)
+            x = window.reshape((1, lookback, len(feature_cols))).astype(np.float32)
             y_pred = float(model.predict(x, verbose=0)[0][0])
-            preds_real.append(_minmax_inv(y_pred, x_min, x_max))
-            window = np.concatenate([window[1:], np.asarray([y_pred], dtype=np.float32)], axis=0)
+            pred_real_val = _minmax_inv(y_pred, x_min, x_max)
+            preds_real.append(pred_real_val)
+            
+            # 构造下一个窗口的新行 (自回归预测模式下，其他特征只能用最后一行的或简单的平滑预测)
+            # 这里简单复用最后一行的非价格特征
+            new_row = window[-1].copy()
+            new_row[feature_cols.index('close')] = y_pred
+            window = np.concatenate([window[1:], new_row.reshape(1, -1)], axis=0)
 
         hist = []
-        for _, r in df.iterrows():
+        # 只返回最后 30 天的历史显示在图表上
+        for _, r in df.tail(30).iterrows():
             hist.append({
                 'date': pd.to_datetime(r['date']).strftime('%Y-%m-%d'),
                 'close': float(r['close']),
@@ -1171,19 +1180,23 @@ def api_predict_gru():
             'success': True,
             'stock_code': code,
             'market_type': market_type,
+            'model_type': model_type,
             'lookback': int(lookback),
             'history': hist,
             'forecast': forecast,
             'boundary_date': hist[-1]['date'] if hist else '',
         })
-    except FileNotFoundError:
-        return jsonify({'success': False, 'error': '未找到GRU模型权重文件，请先训练模型'}), 500
-    except ValueError as e:
-        logger.warning('api_predict_gru model/weights error: %s', e)
+    except FileNotFoundError as e:
         return jsonify({'success': False, 'error': str(e)}), 500
     except Exception as e:
-        logger.exception('api_predict_gru failed')
+        logger.exception('api_predict_stock failed')
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/predict_gru')
+def api_predict_gru():
+    # Legacy support
+    return api_predict_stock()
 
 
 def _compute_rsi(close: pd.Series, window: int = 14) -> float:

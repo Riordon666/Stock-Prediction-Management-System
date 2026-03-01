@@ -226,18 +226,19 @@
         }
     }
 
-    function requestPredict(stockCode, marketType, days) {
+    function requestPredict(stockCode, marketType, days, modelType) {
         clearError();
         setLoading(true);
 
         $.ajax({
-            url: '/api/predict_gru',
+            url: '/api/predict_stock',
             type: 'GET',
             dataType: 'json',
             data: {
                 stock_code: stockCode,
                 market_type: marketType,
-                days: days
+                days: days,
+                model_type: modelType
             },
             success: function (resp) {
                 setLoading(false);
@@ -269,6 +270,7 @@
             const stockCode = ($('#predict-stock-code').val() || '').trim();
             const marketType = ($('#predict-market-type').val() || 'A').trim();
             const days = Number($('#predict-days').val() || 10);
+            const modelType = ($('#predict-model-type').val() || 'gru').trim();
 
             if (!stockCode) {
                 showError('请输入股票代码！');
@@ -282,7 +284,7 @@
                 showError('图表库加载失败（ApexCharts 未加载）');
                 return;
             }
-            requestPredict(stockCode, marketType, days);
+            requestPredict(stockCode, marketType, days, modelType);
         });
     });
 })();

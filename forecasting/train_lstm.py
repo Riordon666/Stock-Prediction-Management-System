@@ -10,24 +10,10 @@ cuda_bin = r"D:\NVIDIA\CUDA\Development\v11.2\bin"
 if os.path.exists(cuda_bin) and hasattr(os, 'add_dll_directory'):
     os.add_dll_directory(cuda_bin)
 
-from forecasting.models.gru.trainer import TrainConfig, train_loop
+from forecasting.models.lstm.trainer import TrainConfig, train_loop
 
 
 # ========== 可直接修改的训练参数（改完保存后直接运行本文件即可开始训练）==========
-# 解释器版本：已在项目根目录创建 py.ini（[defaults] python=3.10）。
-#
-# 缓存清理：__pycache__ 只是编译缓存文件夹，删除不会影响代码。
-# - CLEAN_PYCACHE=True 时，本脚本每次启动会自动清理 forecasting/ 下的所有 __pycache__。
-#
-# 断点续训：训练进度与权重默认保存在：forecasting/models/gru/
-# - state.json：训练位置、cycle、本轮已训练股票列表（重启后继续本轮未训练的股票）
-# - history.jsonl：每只股票一次训练的日志
-# - checkpoints/latest.weights.h5：最新模型权重
-# - 如果你修改了股票池（例如 hk_symbols.txt 行数变化 / markets 变化），需要把 RESET=True 跑一次来重建进度
-#
-# A+HK 联训：
-# - MARKETS=('A','HK') 时，HK_STOCKS_FILE 必须存在（默认 forecasting/hk_symbols.txt）。
-# - A 股股票池默认来自 A_BOARD + A_LIMIT；也可以用 A_STOCKS_FILE 指定股票列表文件。
 
 CLEAN_PYCACHE = True
 
@@ -39,11 +25,11 @@ AUTOREGRESSIVE_TRAINING = True
 
 NORMALIZE_HK_SYMBOLS_FILE = True
 
-AUTO_MATCH_A_LIMIT_TO_HK = True # 如果为 True，则训练过程中如果 A 股股票池有变化，将自动将 A_LIMIT 个 A 股股票加入 HK 股股票池
+AUTO_MATCH_A_LIMIT_TO_HK = True 
 
-AUTO_RESET_ON_UNIVERSE_MISMATCH = True # 如果为 True，则训练过程中如果股票池有变化，将自动重置训练进度
+AUTO_RESET_ON_UNIVERSE_MISMATCH = True 
 
-WIPE_ALL_GRU_ARTIFACTS = False #这行代码不要乱改，会删除所有模型权重并从头开始训练，保持他是False
+WIPE_ALL_LSTM_ARTIFACTS = False 
 
 MARKETS = ('A', 'HK')
 
@@ -62,9 +48,9 @@ TOTAL_DAYS = 50
 EPOCHS_PER_STOCK = 1
 BATCH_SIZE = 16
 
-UNITS = 50
+UNITS = 128
 LAYERS = 3
-DROPOUT = 0.2
+DROPOUT = 0.5
 LEARNING_RATE = 0.001
 
 
@@ -146,9 +132,9 @@ def _normalize_hk_symbols_file(path: str) -> int:
     return int(len(out))
 
 
-def _wipe_gru_artifacts() -> None:
+def _wipe_lstm_artifacts() -> None:
     root = Path(__file__).resolve().parent
-    model_dir = root / 'models' / 'gru'
+    model_dir = root / 'models' / 'lstm'
     training_dir = root / 'training_data'
 
     removed_files = 0
@@ -170,16 +156,8 @@ def _wipe_gru_artifacts() -> None:
         except Exception:
             pass
 
-    for d in [training_dir / 'A', training_dir / 'HK']:
-        if d.exists() and d.is_dir():
-            try:
-                shutil.rmtree(d, ignore_errors=True)
-                removed_dirs += 1
-            except Exception:
-                pass
-
     print(
-        f"[INFO] wiped GRU artifacts: removed_files={removed_files} removed_dirs={removed_dirs}",
+        f"[INFO] wiped LSTM artifacts: removed_files={removed_files} removed_dirs={removed_dirs}",
         flush=True,
     )
 
@@ -213,8 +191,8 @@ def main(argv=None):
         if removed:
             print(f"[INFO] removed __pycache__ dirs: {removed}")
 
-    if WIPE_ALL_GRU_ARTIFACTS:
-        _wipe_gru_artifacts()
+    if WIPE_ALL_LSTM_ARTIFACTS:
+        _wipe_lstm_artifacts()
 
     markets = tuple([s.strip().upper() for s in str(args.markets).split(',') if s.strip()])
 
@@ -225,10 +203,7 @@ def main(argv=None):
             raise ValueError('HK training requires hk_symbols.txt or --hk-stocks-file')
         if not Path(hk_file).exists():
             raise FileNotFoundError(hk_file)
-        if NORMALIZE_HK_SYMBOLS_FILE:
-            hk_count = _normalize_hk_symbols_file(hk_file)
-        else:
-            hk_count = _normalize_hk_symbols_file(hk_file)
+        hk_count = _normalize_hk_symbols_file(hk_file)
 
     effective_a_limit = int(args.a_limit)
     if 'A' in markets and 'HK' in markets and AUTO_MATCH_A_LIMIT_TO_HK and (not str(args.a_stocks_file or '').strip()):
@@ -252,7 +227,7 @@ def main(argv=None):
         a_stocks_file=str(args.a_stocks_file or ''),
         hk_stocks_file=hk_file,
         steps=int(args.steps),
-        reset=(True if WIPE_ALL_GRU_ARTIFACTS else bool(args.reset)),
+        reset=(True if WIPE_ALL_LSTM_ARTIFACTS else bool(args.reset)),
         load_existing_weights=bool(LOAD_EXISTING_WEIGHTS),
         autoregressive_training=bool(AUTOREGRESSIVE_TRAINING),
     )

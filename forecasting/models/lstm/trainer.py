@@ -14,7 +14,7 @@ from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 import numpy as np
 import pandas as pd
 
-from .model import build_gru_regression_model
+from .model import build_lstm_regression_model
 from ...core.feature_engine import get_feature_engine
 from app.core.data_provider import get_data_provider
 
@@ -27,9 +27,9 @@ class TrainConfig:
     epochs_per_stock: int = 1
     batch_size: int = 16
 
-    units: int = 50
+    units: int = 128
     layers: int = 3
-    dropout: float = 0.2
+    dropout: float = 0.5
     learning_rate: float = 0.001
 
     save_every: int = 5
@@ -60,7 +60,7 @@ def _root_dir() -> Path:
 
 
 def _model_dir() -> Path:
-    return _root_dir() / 'models' / 'gru'
+    return _root_dir() / 'models' / 'lstm'
 
 
 def _training_data_dir() -> Path:
@@ -434,10 +434,9 @@ def _save_weights_safe(model, path: Path, retries: int = 3, delay: float = 0.4) 
     _ensure_dir(path.parent)
     last_exc: Optional[Exception] = None
     
-    # Determine the correct suffix to preserve. Keras 3 requires '.weights.h5'
     base_name = path.name
     if base_name.endswith('.weights.h5'):
-        stem = base_name[:-11]  # remove '.weights.h5'
+        stem = base_name[:-11]
         suffix = '.weights.h5'
     else:
         stem = path.stem
@@ -477,14 +476,12 @@ def _save_weights_safe(model, path: Path, retries: int = 3, delay: float = 0.4) 
 
 
 def _load_weights_compat(model, path: Path) -> Tuple[bool, Optional[Exception]]:
-    # 策略 1：直接调用 Keras 原生 load_weights
     try:
         model.load_weights(str(path))
         return True, None
     except Exception as exc:
         first_exc: Exception = exc
 
-    # 策略 2：使用旧版 Keras 2 的 hdf5_format 加载（跳过 Keras 3 格式）
     try:
         import h5py
         from tensorflow.python.keras.saving import hdf5_format
@@ -497,12 +494,10 @@ def _load_weights_compat(model, path: Path) -> Tuple[bool, Optional[Exception]]:
     except Exception:
         pass
 
-    # 策略 3：手动从 h5 文件中按名称匹配并逐层赋值权重（兼容 Keras 2 和 Keras 3 格式）
     try:
         import h5py
 
         def _collect_arrays(group) -> Dict[str, np.ndarray]:
-            """递归地从 h5 group 中收集所有数据集（numpy 数组）"""
             result: Dict[str, np.ndarray] = {}
             for key in group.keys():
                 item = group[key]
@@ -523,20 +518,16 @@ def _load_weights_compat(model, path: Path) -> Tuple[bool, Optional[Exception]]:
         if not all_arrays:
             return False, first_exc
 
-        # 将所有提取出来的数组按 shape 分组，方便后续匹配
-        # 获取模型中每一层期望的权重 shapes
         assigned_count = 0
         for layer in model.layers:
             layer_weights = layer.get_weights()
             if not layer_weights:
                 continue
 
-            # 为这个 layer 寻找 shape 完全匹配的权重数组
             expected_shapes = [w.shape for w in layer_weights]
             matched_arrays: List[np.ndarray] = []
             used_keys: List[str] = []
 
-            # 先尝试按层名称进行精确匹配
             layer_name = layer.name
             name_matched_arrays: Dict[str, np.ndarray] = {}
             for arr_key, arr_val in all_arrays.items():
@@ -544,7 +535,6 @@ def _load_weights_compat(model, path: Path) -> Tuple[bool, Optional[Exception]]:
                     name_matched_arrays[arr_key] = arr_val
 
             if name_matched_arrays:
-                # 按 expected shape 的顺序从名称匹配的数组中找
                 for shape in expected_shapes:
                     found = False
                     for arr_key, arr_val in name_matched_arrays.items():
@@ -558,7 +548,6 @@ def _load_weights_compat(model, path: Path) -> Tuple[bool, Optional[Exception]]:
                         used_keys = []
                         break
 
-            # 如果名称匹配失败，尝试纯 shape 匹配（从剩余的数组中按顺序找）
             if len(matched_arrays) != len(expected_shapes):
                 matched_arrays = []
                 used_keys_set = set()
@@ -577,7 +566,6 @@ def _load_weights_compat(model, path: Path) -> Tuple[bool, Optional[Exception]]:
             if len(matched_arrays) == len(expected_shapes):
                 layer.set_weights(matched_arrays)
                 assigned_count += 1
-                # 从 all_arrays 中移除已使用的，避免重复分配
                 for k in used_keys:
                     all_arrays.pop(k, None)
 
@@ -607,7 +595,7 @@ def train_loop(cfg: TrainConfig) -> None:
     for mt, _ in universe:
         market_counts[mt] = market_counts.get(mt, 0) + 1
     print(
-        f"[GRU] universe_size={len(universe)} market_counts={market_counts} lookback={cfg.lookback} total_days={cfg.total_days}",
+        f"[LSTM] universe_size={len(universe)} market_counts={market_counts} lookback={cfg.lookback} total_days={cfg.total_days}",
         flush=True,
     )
 
@@ -631,9 +619,9 @@ def train_loop(cfg: TrainConfig) -> None:
         
     feature_cols = [c for c in sample_df.columns if c not in ['date', 'dt_str']]
     feature_count = len(feature_cols)
-    print(f"[GRU] Multi-feature enabled: features={feature_cols} count={feature_count}")
+    print(f"[LSTM] Multi-feature enabled: features={feature_cols} count={feature_count}")
 
-    model = build_gru_regression_model(
+    model = build_lstm_regression_model(
         lookback=int(cfg.lookback),
         feature_count=feature_count,
         units=int(cfg.units),
@@ -659,25 +647,20 @@ def train_loop(cfg: TrainConfig) -> None:
 
         if not ok:
             print(
-                f"[WARN] load latest.weights.h5 failed: {type(err).__name__ if err else 'Error'}: {err}. "
-                "所有权重加载策略均失败，将使用全新模型从头开始训练。",
+                f"[WARN] load latest.weights.h5 failed: {err}. 使用全新模型从头开始训练。",
                 flush=True,
             )
-            # 重置训练状态，从头开始
             state = None
             cfg.reset = True
         else:
-            try:
-                print("[INFO] loaded existing weights.", flush=True)
-            except Exception:
-                pass
+            print("[INFO] loaded existing weights.", flush=True)
 
     if state is not None:
         if state.get('universe_key') != universe_key:
             old = str(state.get('universe_key') or '')
             raise ValueError(
                 'universe mismatch: stock list changed since last run. '
-                'Set RESET=True in forecasting/train_gru.py (or pass --reset) to rebuild progress. '
+                'Set RESET=True in forecasting/train_lstm.py (or pass --reset) to rebuild progress. '
                 f'old_universe_key={old} new_universe_key={universe_key}'
             )
 
@@ -775,7 +758,7 @@ def train_loop(cfg: TrainConfig) -> None:
                 state['ts'] = _now_ts()
                 _save_state(paths, state)
                 print(
-                    f"[GRU] cycle={state.get('cycle', 0)} {len(completed)}/{len(universe)} {market_type}:{code} status=skip_empty",
+                    f"[LSTM] cycle={state.get('cycle', 0)} {len(completed)}/{len(universe)} {market_type}:{code} status=skip_empty",
                     flush=True,
                 )
                 steps_left -= 1
@@ -802,7 +785,7 @@ def train_loop(cfg: TrainConfig) -> None:
             mse_real = None
 
             if bool(getattr(cfg, 'autoregressive_training', False)):
-                # 自回归训练暂不支持多特征
+                # 自回归训练暂不支持多特征（逻辑较复杂需大量改动），回退到普通训练或报警告
                 print("[WARN] Autoregressive training not optimized for multi-feature. Running standard fit.", flush=True)
 
             x, y = _make_windows_multi(df_scaled, feature_cols, 'close', lookback=int(cfg.lookback))
@@ -860,16 +843,9 @@ def train_loop(cfg: TrainConfig) -> None:
                 loss_s = str(loss)
                 val_s = str(val_loss)
 
-            try:
-                mse_scaled_s = f"{mse_scaled:.6f}" if mse_scaled is not None else "None"
-                mse_real_s = f"{mse_real:.6f}" if mse_real is not None else "None"
-            except Exception:
-                mse_scaled_s = str(mse_scaled)
-                mse_real_s = str(mse_real)
-
             print(
-                f"[GRU] run={state.get('run_id', 1)} total_cycles={lifetime.get('cycles_completed', 0)} total_trained={lifetime.get('trained_total', 0)} "
-                f"cycle={state.get('cycle', 0)} {len(completed)}/{len(universe)} {market_type}:{code} status=ok loss={loss_s} val_loss={val_s} mse_scaled={mse_scaled_s} mse_real={mse_real_s}",
+                f"[LSTM] run={state.get('run_id', 1)} total_cycles={lifetime.get('cycles_completed', 0)} total_trained={lifetime.get('trained_total', 0)} "
+                f"cycle={state.get('cycle', 0)} {len(completed)}/{len(universe)} {market_type}:{code} status=ok loss={loss_s} val_loss={val_s}",
                 flush=True,
             )
 

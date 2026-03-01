@@ -1,13 +1,13 @@
 {
-  "ts": 1772372177.812034,
+  "ts": 1772371360.1803043,
   "universe_key": "4475fd9f4e0e0bd131efcc8f1b92479dd254341679b97ce38a7cd537b2f5962c",
   "universe_size": 1697,
   "lookback": 30,
   "total_days": 50,
   "model": {
-    "units": 50,
+    "units": 128,
     "layers": 3,
-    "dropout": 0.2,
+    "dropout": 0.5,
     "learning_rate": 0.001
   },
   "feature_cols": [
@@ -35,6 +35,6 @@
     "sentiment"
   ],
   "feature_count": 22,
-  "run_id": 17,
+  "run_id": 3,
   "autoregressive_training": true
 }

@@ -80,7 +80,7 @@ class FallbackManager:
                 except Exception as e:
                     last_error = e
                     adapter_had_exception = True
-                    logger.warning(f"[{adapter_name}] {method_name} 失败(重试{retry+1}/{self.max_retries}): {e}")
+                    logger.info(f"[{adapter_name}] {method_name} 失败(重试{retry+1}/{self.max_retries}): {e}")
 
                     if retry < self.max_retries - 1:
                         time.sleep(self.retry_delay)
@@ -89,7 +89,7 @@ class FallbackManager:
             if allow_empty_result and adapter_returned_empty and not adapter_had_exception:
                 continue
             self._fail_count[adapter_name] = self._fail_count.get(adapter_name, 0) + 1
-            logger.warning(f"[{adapter_name}] 失败次数: {self._fail_count[adapter_name]}")
+            logger.info(f"[{adapter_name}] 失败次数: {self._fail_count[adapter_name]}")
 
         # 所有适配器都失败了
         if allow_empty_result and got_empty_without_exception:
