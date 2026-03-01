@@ -1,176 +1,85 @@
 ![Python](https://img.shields.io/badge/Python-3.10.11-blue?logo=python&logoColor=white)
 ![Flask](https://img.shields.io/badge/Flask-Web%20Framework-black?logo=flask&logoColor=white)
-![License](https://img.shields.io/badge/License-MIT-green)
+![TensorFlow](https://img.shields.io/badge/TensorFlow-2.10.1--GPU-orange?logo=tensorflow&logoColor=white)
+![CUDA](https://img.shields.io/badge/CUDA-11.2-76b900?logo=nvidia&logoColor=white)
 
+# Stock Prediction Management System (专业增强版)
 
-# Stock Prediction Management System
-（股票预测管理系统）
+基于 **Flask + TensorFlow** 的全栈股票分析与预测系统。本系统已升级为 **22维多特征预测架构**，集成了深度学习（GRU/LSTM）、技术指标计算与实时新闻情感分析。
 
+## 🌟 核心升级特性 (v1.1.0)
 
-基于 **Flask** 的股票分析/预测管理系统，提供股票历史行情获取、技术指标可视化、综合评分与分析报告展示等功能。
+- **双模型支持**: 提供 **GRU** 与 **LSTM** 两种深度学习模型，支持在前端动态切换。
+- **22维特征引擎**: 预测维度从单一价格升级为 22 维增强向量，包含：
+  - **基础行情**: 开/高/低/收、成交量、成交额。
+  - **15项技术指标**: MA(5/10/20)、EMA(12/26)、MACD(Diff/Dea/Hist)、RSI(14)、KDJ(K/D/J)、成交量均线。
+  - **新闻情感分析**: 集成 HuggingFace Transformer 模型，对财联社快讯进行实时情感量化。
+- **GPU 硬件加速**: 深度适配 Windows CUDA 11.2，支持 NVIDIA 显卡加速训练与推理。
+- **训练保护机制**: 训练脚本支持 `SIGINT/SIGTERM` 信号捕捉，通过 Ctrl+C 或 PyCharm 停止时自动保存权重与断点。
 
-## 功能特性
+## 🛠️ 功能模块
 
-| 模块       | 路由/入口 | 功能说明 | 状态 |
-|----------| --- | --- | --- |
-| 首页(实时快讯) | `/` | 实时快讯时间线（默认近2天，最多500条）<br>只看重要（关键词过滤）<br>手动刷新（触发后端抓取并刷新列表）<br>自动刷新（5分钟一次）<br>底部滚动快讯（取最新3条，无缝循环）<br>今日热榜（TopHub，失败回退并缓存） | 已实现 |
-| 股票分析     | `/analysis` | 价格趋势（收盘价折线 + MA5/MA20/MA60）<br>技术指标（RSI / MACD：含 Signal、Histogram）<br>成交量（柱状图 + 均量线 MA20）<br>支撑/压力位展示<br>雷达图多维度评分<br>AI 分析报告展示 | 已实现 |
-| 股票预测     | `/predict` | 使用本地训练的 GRU 模型进行预测：最近 N 日历史 + 递推预测未来 10/20/30 天<br>预测结果可视化（历史+预测分段展示） | 已实现 |
+| 模块 | 入口 | 技术要点 |
+| --- | --- | --- |
+| **实时快讯** | `/` | 财联社异步抓取、关键词权重过滤、无缝滚动通知栏、今日热榜缓存。 |
+| **多维分析** | `/analysis` | ApexCharts 交互式 K 线图、MACD/RSI 联动、自动支撑压力位算法、AI 自动生成的分析报告副本。 |
+| **AI 深度预测** | `/predict` | **22维特征输入**、GRU/LSTM 模型切换、自回归滑动预测（未来10/20/30天）、多指标对齐算法。 |
 
+## 📂 目录结构 (精简)
 
-## 技术栈
-
-- **后端**：Flask
-- **数据处理**：pandas、numpy
-- **前端图表**：ApexCharts（通过 CDN 引入）
-- **数据源适配器**：
-  - akshare（优先）
-  - baostock（可选，作为备用数据源）
-
-## 目录结构
-
-```
+```text
 Stock Prediction Management System/
 ├─ app/
 │  ├─ web/
-│  │  ├─ web_server.py          # Flask Web 服务与 API
-│  │  ├─ templates/             # HTML 模板（index/analysis/predict）
-│  │  └─ static/                # 静态资源（css、js、图片等）
+│  │  ├─ web_server.py          # 核心 API 与 Web 服务
+│  │  └─ templates/             # 现代化 UI 模板
 │  ├─ core/
-│  │  ├─ database.py            # 数据库管理
-│  │  ├─ data_provider.py       # 统一数据提供层（多数据源故障转移）
-│  │  ├─ fallback_manager.py    # 故障转移管理器
-│  │  └─ news_fetcher.py        # 新闻抓取与本地缓存（财联社电报）
-│  └─ adapters/
-│     ├─ __init__.py            # 适配器导出
-│     ├─ akshare_adapter.py     # akshare 适配器
-│     ├─ baostock_adapter.py    # baostock 适配器
-│     └─ base_adapter.py        # 适配器基类
-├─ data/
-│  └─ logs/                     # 服务日志（默认输出到这里）
-│  └─ news/                     # 快讯缓存（news_YYYYMMDD.json）
+│  │  ├─ data_provider.py       # 万能数据适配层
+│  │  └─ news_fetcher.py        # 快讯异步采集
 ├─ forecasting/
-│  ├─ train_gru.py              # GRU 训练脚本
-│  ├─ test_gru.py               # GRU 测试脚本
-│  └─ models/                   # 预测模型（GRU）目录
-└─ run.py                       # 入口：启动 Flask 服务
+│  ├─ core/                     # 特征工程 (FeatureEngine)
+│  ├─ utils/                    # 技术指标 (Indicators) 与 情感分析 (Sentiment)
+│  ├─ models/                   # 存储 GRU/LSTM 权重与训练断点 (state.json)
+│  ├─ train_gru.py              # GRU 22维多特征训练脚本
+│  └─ train_lstm.py             # LSTM 22维多特征训练脚本
+├─ .env                         # 环境配置 (端口、日志等)
+└─ run.py                       # 一键启动入口
 ```
 
-## 安装与运行
+## 🚀 快速开始
 
-
-### 1. 创建并激活虚拟环境（可选但推荐）
-
-Windows PowerShell：
+### 1. 环境准备
+推荐使用 Python 3.10。确保已安装 CUDA 11.2 和 cuDNN 8.1（若需使用 GPU 加速）。
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-```
-
-### 2. 安装依赖
-
-```powershell
 pip install -r requirements.txt
 ```
 
-### 3. 启动服务
+### 2. 模型训练 (必须执行)
+由于系统已升级至 22 维输入，需先重训模型生成最新的权重文件：
+```powershell
+python -m forecasting.train_gru
+python -m forecasting.train_lstm
+```
+*注：训练过程中可随时中止，系统会自动保存已完成的进度。*
 
+### 3. 运行系统
 ```powershell
 python run.py
 ```
+访问：`http://localhost:8888`
 
-默认访问：
+## 📊 预测 API 说明
 
-- http://127.0.0.1:8888
+- **接口**: `GET /api/predict_stock`
+- **参数**:
+  - `stock_code`: 6位代码（如 `600519`）
+  - `market_type`: `A` / `HK`
+  - `predict_days`: `10` / `20` / `30`
+  - `model_type`: `gru` / `lstm`
+- **特征工程**: 自动从 `ohlcv` 数据计算 15 个指标并融合当前新闻情感得分进行预测。
 
-## 配置说明（环境变量）
-
-项目使用 `python-dotenv` 读取环境变量（可自行创建 `.env` 文件）：
-
-- `PORT`：服务端口（默认 8888）
-- `LOG_LEVEL`：日志级别（默认 INFO）
-- `LOG_FILE`：日志文件路径（默认 `data/logs/server.log`）
-- `TOPHUBDATA_ACCESS_KEY`：可选。用于访问 TopHubData 官方 API 获取“今日热榜”（更稳定）。未配置时会自动回退到 `tophub.today` 抓取解析。
-
-示例（.env）：
-
-```env
-PORT=8888
-LOG_LEVEL=INFO
-LOG_FILE=data/logs/server.log
-TOPHUBDATA_ACCESS_KEY=your_key_here
-```
-
-## 首页实时快讯相关 API
-
-- `GET /api/latest_news`
-  - 参数：`days`（1-7）、`limit`（1-500）、`important`（0/1）
-  - 说明：返回实时快讯列表；若本地无数据会尝试触发一次抓取。
-- `POST /api/fetch_news`
-  - 说明：触发后台抓取财联社电报数据（异步执行）。
-- `GET /api/hotspots`
-  - 参数：`limit`（1-30）
-  - 说明：返回“今日热榜”；会缓存最近一次非空结果，抓取/解析失败时回退到上次非空数据，避免频繁出现“暂无热点”。
-
-## 股票预测（GRU）
-
-### 预测页面
-
-- `GET /predict`
-  - 说明：股票预测页面，输入股票代码/市场/预测天数，展示历史+预测曲线。
-
-### 预测 API
-
-- `GET /api/predict_gru`
-  - 参数：
-    - `stock_code`：股票代码（A股示例：`600519`；港股示例：`00700`；美股示例：`AAPL`）
-    - `market_type`：`A` / `HK` / `US`
-    - `days`：`10` / `20` / `30`
-  - 返回：
-    - `history`：历史数据数组（`[{date, close}, ...]`）
-    - `forecast`：预测数据数组（`[{date, close}, ...]`）
-    - `boundary_date`：历史与预测的分界日期
-  - 备注：依赖本地 GRU 权重文件（见下方训练说明）。
-
-## GRU 模型训练
-
-训练脚本：
-
-```powershell
-python forecasting\train_gru.py
-```
-
-默认模型输出目录：
-
-- 权重：`forecasting/models/gru/checkpoints/latest.weights.h5`
-- 元信息：`forecasting/models/gru/meta.json`
-
-预测接口会读取上述文件；如果权重不存在，会返回“请先训练模型”。
-
-## 数据源说明
-
-- **akshare**：默认优先使用。
-- **baostock**：可选备用。
-
-当未安装 `baostock` 时，日志会提示 `BaostockAdapter`不可用，这是正常的（只要 akshare 可用即可完成数据获取）。
-
-## 常见问题
-
-### 1) 提示“未检测到可用数据源适配器”
-
-- 需要至少安装一个数据源：
-  - `pip install akshare`（推荐）
-  - 或 `pip install baostock`
-
-### 2) 技术指标/图表显示异常
-
-- 前端图表使用 ApexCharts（CDN 引入），请确认网络可访问 CDN。
-- 建议浏览器强制刷新（Ctrl+F5）避免缓存影响。
-
-## 许可证
-
-MIT License
-
-## 免责声明
-本系统为个人设计与研究项目，仅用于学习与学术研究用途，不构成任何投资建议。股票数据来源于公开市场，预测结果可能存在误差，仅供参考。投资有风险，入市需谨慎！
+## ⚠️ 免责声明
+本系统仅供学术研究使用。股市有风险，AI 预测仅作为多维度参考之一，不构成任何投资建议。
