@@ -1,7 +1,7 @@
 {
-  "ts": 1772371360.1803043,
-  "universe_key": "4475fd9f4e0e0bd131efcc8f1b92479dd254341679b97ce38a7cd537b2f5962c",
-  "universe_size": 1697,
+  "ts": 1772541016.8524632,
+  "universe_key": "db27c2780c96a4c2a5426b205d1c9c54d530bd22f4040949a991d83a30a75c79",
+  "universe_size": 1800,
   "lookback": 30,
   "total_days": 50,
   "model": {
@@ -35,6 +35,6 @@
     "sentiment"
   ],
   "feature_count": 22,
-  "run_id": 3,
+  "run_id": 5,
   "autoregressive_training": true
 }

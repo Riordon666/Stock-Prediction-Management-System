@@ -999,6 +999,176 @@ def _manual_load_gru_weights_from_h5(model: Any, weights_path: Path) -> bool:
         return False
 
 
+def _manual_load_lstm_weights_from_h5(model: Any, weights_path: Path) -> bool:
+    """手动从 H5 文件加载 LSTM 权重（备用方案）"""
+    try:
+        import h5py  # type: ignore
+        import tensorflow as tf
+    except Exception:
+        logger.warning('manual lstm load unavailable: missing h5py/tensorflow (weights=%s)', weights_path)
+        return False
+
+    logger.info('manual lstm load: attempting to assign weights from h5 (weights=%s)', weights_path)
+
+    def _iter_datasets(g, prefix: str):
+        out = []
+        for k, v in g.items():
+            p = f'{prefix}/{k}' if prefix else str(k)
+            try:
+                if hasattr(v, 'items'):
+                    out.extend(_iter_datasets(v, p))
+                else:
+                    out.append((p, v[()]))
+            except Exception:
+                continue
+        return out
+
+    try:
+        with h5py.File(str(weights_path), 'r') as f:
+            try:
+                logger.info('manual lstm load: h5 top_keys=%s', list(f.keys())[:30])
+            except Exception:
+                pass
+            pairs = _iter_datasets(f, '')
+    except Exception:
+        return False
+
+    # 解析 LSTM 和 Dense 权重
+    lstm_blocks: dict[str, dict[str, Any]] = {}
+    dense_blocks: dict[str, dict[str, Any]] = {}
+    for path, arr in pairs:
+        p = '/' + str(path).lstrip('/')
+
+        # 匹配 LSTM cell 权重
+        ml = re.match(
+            r'^(.*/lstm_cell[^/]*)/(kernel(?::0)?|recurrent_kernel(?::0)?|bias(?::0)?)$',
+            p,
+        )
+        if ml:
+            prefix = ml.group(1)
+            kind = ml.group(2).split(':', 1)[0]
+            d = lstm_blocks.setdefault(prefix, {})
+            d[kind] = arr
+            continue
+
+        # 匹配 Dense 权重
+        md = re.match(r'^(.*/dense[^/]*)/(kernel(?::0)?|bias(?::0)?)$', p)
+        if md:
+            prefix = md.group(1)
+            kind = md.group(2).split(':', 1)[0]
+            d = dense_blocks.setdefault(prefix, {})
+            d[kind] = arr
+
+    # 如果没找到，尝试 TF checkpoint 风格的布局
+    if not lstm_blocks and not dense_blocks:
+        lstm_ckpt: dict[str, dict[int, Any]] = {}
+        dense_ckpt: dict[int, Any] = {}
+        for path, arr in pairs:
+            s = str(path)
+
+            md0 = re.match(r'^_layer_checkpoint_dependencies\\dense/vars/(\d+)$', s)
+            if md0:
+                try:
+                    dense_ckpt[int(md0.group(1))] = arr
+                except Exception:
+                    pass
+                continue
+
+            ml0 = re.match(r'^_layer_checkpoint_dependencies\\(lstm(?:_\d+)?)\\cell/vars/(\d+)$', s)
+            if ml0:
+                layer_name = ml0.group(1)
+                try:
+                    idx = int(ml0.group(2))
+                except Exception:
+                    continue
+                d = lstm_ckpt.setdefault(layer_name, {})
+                d[idx] = arr
+
+        for layer_name, d in lstm_ckpt.items():
+            if all(i in d for i in (0, 1, 2)):
+                lstm_blocks[f'ckpt:{layer_name}'] = {
+                    'kernel': d[0],
+                    'recurrent_kernel': d[1],
+                    'bias': d[2],
+                }
+        if all(i in dense_ckpt for i in (0, 1)):
+            dense_blocks['ckpt:dense'] = {
+                'kernel': dense_ckpt[0],
+                'bias': dense_ckpt[1],
+            }
+
+    if not lstm_blocks and not dense_blocks:
+        logger.warning('manual lstm load: no matching datasets found')
+        return False
+
+    def _extract_layer_name(block_prefix: str) -> str:
+        s0 = str(block_prefix)
+        if s0.startswith('ckpt:'):
+            return s0.split(':', 1)[1]
+        parts = [x for x in str(block_prefix).split('/') if x]
+        if not parts:
+            return str(block_prefix)
+        for i in range(len(parts) - 1):
+            if parts[i + 1].startswith('lstm_cell'):
+                return parts[i]
+        return parts[-1]
+
+    lstm_items: list[tuple[str, str, dict[str, Any]]] = [
+        (k, _extract_layer_name(k), v)
+        for k, v in lstm_blocks.items()
+        if all(x in v for x in ('kernel', 'recurrent_kernel', 'bias'))
+    ]
+    dense_items: list[tuple[str, str, dict[str, Any]]] = [
+        (k, _extract_layer_name(k), v)
+        for k, v in dense_blocks.items()
+        if all(x in v for x in ('kernel', 'bias'))
+    ]
+
+    def _name_key(prefix: str, name: str):
+        if name == prefix:
+            return (0, 0)
+        m = re.match(rf'^{re.escape(prefix)}_(\d+)$', name)
+        if m:
+            return (0, int(m.group(1)) + 1)
+        return (1, name)
+
+    lstm_items.sort(key=lambda t: _name_key('lstm', t[1]))
+    dense_items.sort(key=lambda t: _name_key('dense', t[1]))
+
+    try:
+        lstm_layers = [l for l in getattr(model, 'layers', []) if isinstance(l, tf.keras.layers.LSTM)]
+        dense_layers = [l for l in getattr(model, 'layers', []) if isinstance(l, tf.keras.layers.Dense)]
+        if not lstm_layers or not dense_layers:
+            return False
+        if len(lstm_items) < len(lstm_layers) or not dense_items:
+            logger.warning(
+                'manual lstm load: insufficient blocks in h5 (lstm_blocks=%s dense_blocks=%s)',
+                [x[1] for x in lstm_items],
+                [x[1] for x in dense_items],
+            )
+            return False
+
+        for i, layer in enumerate(lstm_layers):
+            _, lname, v = lstm_items[i]
+            layer.cell.kernel.assign(np.asarray(v['kernel']))
+            layer.cell.recurrent_kernel.assign(np.asarray(v['recurrent_kernel']))
+            layer.cell.bias.assign(np.asarray(v['bias']))
+
+        _, dense_lname, d0 = dense_items[0]
+        dense_layers[-1].kernel.assign(np.asarray(d0['kernel']))
+        dense_layers[-1].bias.assign(np.asarray(d0['bias']))
+
+        logger.info(
+            'manual lstm load: assigned weights from h5 lstm_layers=%s dense_layer=%s',
+            [x[1] for x in lstm_items[: len(lstm_layers)]],
+            dense_lname,
+        )
+        return True
+    except Exception as e:
+        logger.warning('manual lstm load failed: %s', e)
+        return False
+
+
 def _load_prediction_model(model_type: str = 'gru') -> Any:
     model_type = model_type.lower()
     if model_type not in {'gru', 'lstm'}:
@@ -1072,6 +1242,12 @@ def _load_prediction_model(model_type: str = 'gru') -> Any:
                 cache['meta'] = meta
                 cache['mtime'] = mtime
                 return model
+        elif model_type == 'lstm':
+            if _manual_load_lstm_weights_from_h5(model, weights):
+                cache['model'] = model
+                cache['meta'] = meta
+                cache['mtime'] = mtime
+                return model
         raise ValueError(f'{model_type.upper()} 模型权重加载失败: {e}')
 
     cache['model'] = model
@@ -1105,8 +1281,8 @@ def api_predict_stock():
         total_days = int(meta.get('total_days') or 50)
         feature_cols = meta.get('feature_cols') or ['close']
 
-        # 获取更长的数据以支持特征工程
-        fetch_days = total_days + 60
+        # 获取更长的数据以支持特征工程（需要足够历史计算指标）
+        fetch_days = max(total_days, 60) + 30  # 额外30天保证指标计算完整
         end = datetime.now().date()
         start = end - timedelta(days=fetch_days * 2)
 
@@ -1119,45 +1295,107 @@ def api_predict_stock():
 
         # 特征工程
         from forecasting.core.feature_engine import get_feature_engine
+        from forecasting.utils.indicators import add_indicators
         engine = get_feature_engine()
         df = engine.prepare_features(df_raw, include_sentiment=True)
         
-        # 截取最后的窗口
+        # 截取最后的窗口（保留足够历史用于指标计算）
         df = df.tail(total_days).reset_index(drop=True)
         if len(df) < lookback:
             return jsonify({'success': False, 'error': f'特征处理后数据量不足 ({len(df)}/{lookback})'}), 400
 
-        # 归一化多列
-        df_scaled = df.copy()
-        scaling_meta = {}
-        for col in feature_cols:
-            vals = df[col].values
-            v_min, v_max = float(np.min(vals)), float(np.max(vals))
-            denom = v_max - v_min
-            if denom < 1e-12:
-                df_scaled[col] = 0.0
-            else:
-                df_scaled[col] = (vals - v_min) / denom
-            scaling_meta[col] = (v_min, v_max)
+        # 记录原始价格数据用于后续重新计算指标
+        # 需要保留足够长的历史（至少30天）来计算ma20等指标
+        history_keep_days = max(30, lookback)
+        df_history = df.tail(history_keep_days).copy()
+        
+        # 初始归一化
+        def _normalize_df(df_in: pd.DataFrame, cols: list) -> tuple:
+            """归一化指定列，返回归一化后的df和scaling元数据"""
+            df_out = df_in.copy()
+            scaling = {}
+            for col in cols:
+                if col not in df_out.columns:
+                    continue
+                vals = df_out[col].values
+                v_min, v_max = float(np.min(vals)), float(np.max(vals))
+                denom = v_max - v_min
+                if denom < 1e-12:
+                    df_out[col] = 0.0
+                else:
+                    df_out[col] = (vals - v_min) / denom
+                scaling[col] = (v_min, v_max)
+            return df_out, scaling
+        
+        df_scaled, scaling_meta = _normalize_df(df_history, feature_cols)
+        x_min, x_max = scaling_meta.get('close', (0.0, 1.0))
 
-        x_min, x_max = scaling_meta['close']
-
-        # 预测循环
-        features_scaled = df_scaled[feature_cols].values.astype(np.float32)
-        window = features_scaled[-lookback:].copy()
-
+        # 预测循环：每步重新计算特征
         preds_real: list[float] = []
-        for _ in range(int(predict_days)):
+        df_predict_base = df_history.copy()  # 用于累积预测数据
+        
+        for step_idx in range(int(predict_days)):
+            # 重新计算技术指标（基于当前累积的历史数据）
+            cols_to_use = ['date', 'open', 'high', 'low', 'close', 'volume']
+            if 'amount' in df_predict_base.columns:
+                cols_to_use.append('amount')
+            df_with_indicators = add_indicators(df_predict_base[cols_to_use].copy())
+            
+            # 添加情感得分（复用最后一天的值，因为未来没有新闻）
+            if 'sentiment' in feature_cols:
+                last_sentiment = df_predict_base['sentiment'].iloc[-1] if 'sentiment' in df_predict_base.columns else 0.0
+                df_with_indicators['sentiment'] = last_sentiment
+            
+            # 处理无穷值和空值
+            df_with_indicators = df_with_indicators.replace([np.inf, -np.inf], np.nan)
+            df_with_indicators = df_with_indicators.ffill().bfill()
+            
+            # 确保所有 feature_cols 都存在，缺失的用 0 填充
+            for col in feature_cols:
+                if col not in df_with_indicators.columns:
+                    df_with_indicators[col] = 0.0
+            
+            # 重新归一化（使用当前数据的min/max）
+            df_scaled_step, scaling_step = _normalize_df(df_with_indicators, feature_cols)
+            
+            # 获取预测窗口
+            features_scaled = df_scaled_step[feature_cols].values.astype(np.float32)
+            if len(features_scaled) < lookback:
+                break
+            window = features_scaled[-lookback:].copy()
+            
+            # 预测
             x = window.reshape((1, lookback, len(feature_cols))).astype(np.float32)
             y_pred = float(model.predict(x, verbose=0)[0][0])
-            pred_real_val = _minmax_inv(y_pred, x_min, x_max)
+            
+            # 反归一化（使用当前步骤的close min/max）
+            step_close_min, step_close_max = scaling_step.get('close', (0.0, 1.0))
+            pred_real_val = y_pred * (step_close_max - step_close_min) + step_close_min
             preds_real.append(pred_real_val)
             
-            # 构造下一个窗口的新行 (自回归预测模式下，其他特征只能用最后一行的或简单的平滑预测)
-            # 这里简单复用最后一行的非价格特征
-            new_row = window[-1].copy()
-            new_row[feature_cols.index('close')] = y_pred
-            window = np.concatenate([window[1:], new_row.reshape(1, -1)], axis=0)
+            # 构造新的一行数据（用于下一次迭代）
+            # 对于无法预测的字段，使用合理假设
+            last_row = df_predict_base.iloc[-1].copy()
+            new_date = pd.Timestamp(last_row['date']) + timedelta(days=1)
+            
+            new_row = {
+                'date': new_date,
+                'open': pred_real_val,  # 假设开盘价≈预测收盘价
+                'high': pred_real_val * 1.005,  # 假设高点略高
+                'low': pred_real_val * 0.995,  # 假设低点略低
+                'close': pred_real_val,
+                'volume': last_row.get('volume', 0),  # 复用前一天成交量
+                'amount': last_row.get('amount', 0),
+                'sentiment': last_row.get('sentiment', 0),  # 复用前一天情感
+            }
+            
+            # 添加到历史数据末尾
+            df_predict_base = pd.concat([df_predict_base, pd.DataFrame([new_row])], ignore_index=True)
+            
+            # 保持历史长度不超过需要的大小（避免内存膨胀）
+            max_history = history_keep_days + int(predict_days) + 10
+            if len(df_predict_base) > max_history:
+                df_predict_base = df_predict_base.tail(max_history).reset_index(drop=True)
 
         hist = []
         # 只返回最后 30 天的历史显示在图表上
@@ -1173,7 +1411,7 @@ def api_predict_stock():
         for i in range(int(predict_days)):
             forecast.append({
                 'date': future_dates[i],
-                'close': float(preds_real[i]),
+                'close': float(preds_real[i]) if i < len(preds_real) else 0.0,
             })
 
         return jsonify({

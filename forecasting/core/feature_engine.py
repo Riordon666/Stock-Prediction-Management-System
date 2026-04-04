@@ -35,7 +35,10 @@ class FeatureEngine:
         if include_sentiment:
             df = self._add_sentiment_scores(df)
         
-        # 4. 最后检查并填充空值
+        # 4. 处理无穷值（除零等异常情况）
+        df = df.replace([np.inf, -np.inf], np.nan)
+        
+        # 5. 最后检查并填充空值
         df = df.ffill().bfill()
         
         return df

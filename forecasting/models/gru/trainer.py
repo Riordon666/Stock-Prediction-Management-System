@@ -50,6 +50,9 @@ class TrainConfig:
 
     autoregressive_training: bool = False
 
+    # 缓存的股票列表，避免自动重置时重新获取
+    cached_universe: Optional[List[Tuple[str, str]]] = None
+
 
 def _now_ts() -> float:
     return float(time.time())
@@ -189,8 +192,19 @@ def _get_universe(cfg: TrainConfig) -> List[Tuple[str, str]]:
             if cfg.a_stocks_file:
                 codes = _read_symbols_file(cfg.a_stocks_file)
             else:
-                codes = provider.get_board_stocks(cfg.a_board)
-                codes = sorted([str(x).strip() for x in codes if str(x).strip()])
+                # 重试机制：akshare API 不稳定时多次尝试
+                codes = []
+                max_retries = 3
+                for retry in range(max_retries):
+                    codes = provider.get_board_stocks(cfg.a_board)
+                    codes = sorted([str(x).strip() for x in codes if str(x).strip()])
+                    if codes:
+                        break
+                    print(f"[WARN] A-share fetch attempt {retry + 1}/{max_retries} failed, retrying...", flush=True)
+                    import time
+                    time.sleep(2)
+                if not codes:
+                    print(f"[ERROR] A-share fetch failed after {max_retries} retries", flush=True)
             raw_codes = list(codes)
             codes = [_normalize_a_code(x) for x in raw_codes]
             codes = [x for x in codes if x]
@@ -264,10 +278,20 @@ def _scale_minmax_multi(df: pd.DataFrame, feature_cols: List[str]) -> Tuple[pd.D
     df_scaled = df.copy()
     meta = {}
     for col in feature_cols:
-        vals = df[col].values
-        v_min, v_max = float(np.min(vals)), float(np.max(vals))
+        # 强制转换为数值类型，非法值转为 NaN
+        df_scaled[col] = pd.to_numeric(df_scaled[col], errors='coerce')
+        # 将 NaN 填充为 0.0（或其他合理默认值）
+        df_scaled[col] = df_scaled[col].fillna(0.0)
+        vals = df_scaled[col].values
+        # 处理全列为空或全列相同的情况
+        if vals.size == 0 or not np.isfinite(vals).any():
+            df_scaled[col] = 0.0
+            meta[col] = (0.0, 0.0)
+            continue
+        v_min = float(np.nanmin(vals))
+        v_max = float(np.nanmax(vals))
         denom = v_max - v_min
-        if denom < 1e-12:
+        if denom < 1e-12 or not np.isfinite(denom):
             df_scaled[col] = 0.0
         else:
             df_scaled[col] = (vals - v_min) / denom
@@ -599,7 +623,12 @@ def train_loop(cfg: TrainConfig) -> None:
 
     lifetime = _load_lifetime(paths)
 
-    universe = _get_universe(cfg)
+    # 优先使用缓存的 universe，避免自动重置时重新获取
+    if cfg.cached_universe:
+        universe = cfg.cached_universe
+    else:
+        universe = _get_universe(cfg)
+        cfg.cached_universe = universe  # 缓存供后续使用
     if not universe:
         raise RuntimeError('empty universe')
 
@@ -783,8 +812,30 @@ def train_loop(cfg: TrainConfig) -> None:
 
             stock_info = _fetch_stock_info(code=code, market_type=market_type)
 
+            # 数据质量校验：检查特征列是否存在严重非法值
+            valid_cols = [c for c in feature_cols if c in df.columns]
+            if not valid_cols:
+                row = {
+                    'ts': _now_ts(),
+                    'market_type': market_type,
+                    'code': code,
+                    'cycle': int(state.get('cycle', 0)),
+                    'pos': int(idx),
+                    'trained_total': int(state.get('trained_total', 0)),
+                    'status': 'skip_no_features',
+                }
+                _append_jsonl(paths['history'], row)
+                completed.add(key)
+                state['completed_in_cycle'] = list(completed)
+                state['pos'] = int(idx) + 1
+                state['ts'] = _now_ts()
+                _save_state(paths, state)
+                print(f"[GRU] cycle={state.get('cycle', 0)} {len(completed)}/{len(universe)} {market_type}:{code} status=skip_no_features", flush=True)
+                steps_left -= 1
+                continue
+
             # 归一化多列
-            df_scaled, scaling_meta = _scale_minmax_multi(df, feature_cols)
+            df_scaled, scaling_meta = _scale_minmax_multi(df, valid_cols)
             x_min, x_max = scaling_meta['close']
 
             _cache_training_data(
@@ -805,7 +856,7 @@ def train_loop(cfg: TrainConfig) -> None:
                 # 自回归训练暂不支持多特征
                 print("[WARN] Autoregressive training not optimized for multi-feature. Running standard fit.", flush=True)
 
-            x, y = _make_windows_multi(df_scaled, feature_cols, 'close', lookback=int(cfg.lookback))
+            x, y = _make_windows_multi(df_scaled, valid_cols, 'close', lookback=int(cfg.lookback))
             hist = model.fit(
                 x,
                 y,
@@ -819,6 +870,23 @@ def train_loop(cfg: TrainConfig) -> None:
             try:
                 loss = float(hist.history.get('loss', [None])[-1])
                 val_loss = float(hist.history.get('val_loss', [None])[-1])
+            except Exception:
+                pass
+
+            # 计算 MSE（真实价格空间）
+            try:
+                y_pred = model.predict(x, verbose=0).flatten()
+                y_true = y.flatten()
+                # 归一化空间的 MSE
+                mse_scaled = float(np.mean((y_pred - y_true) ** 2))
+                # 真实价格空间的 MSE
+                x_min, x_max = scaling_meta.get('close', (0.0, 1.0))
+                denom = x_max - x_min
+                if abs(denom) < 1e-12:
+                    denom = 1.0
+                y_pred_real = y_pred * denom + x_min
+                y_true_real = y_true * denom + x_min
+                mse_real = float(np.mean((y_pred_real - y_true_real) ** 2))
             except Exception:
                 pass
 

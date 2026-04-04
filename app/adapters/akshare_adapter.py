@@ -892,7 +892,15 @@ class AkshareAdapter(BaseAdapter):
             func = getattr(ak, fname, None)
             if not callable(func):
                 continue
-            df = self._safe_call_ak(func)
+            # 重试机制：akshare API 不稳定时多次尝试
+            df = None
+            for retry in range(5):
+                df = self._safe_call_ak(func)
+                if df is not None and isinstance(df, pd.DataFrame) and not df.empty:
+                    break
+                if retry < 4:
+                    import time
+                    time.sleep(3)
             if df is None or not isinstance(df, pd.DataFrame) or df.empty:
                 continue
             col = '代码' if '代码' in df.columns else df.columns[0]
