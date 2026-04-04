@@ -444,6 +444,135 @@ def _autoregressive_train(
     return avg_loss, mse_scaled, mse_real
 
 
+def _autoregressive_train_multi(
+    model,
+    df_scaled: pd.DataFrame,
+    feature_cols: List[str],
+    target_col: str,
+    lookback: int,
+    epochs: int,
+    scaling_meta: Dict[str, Tuple[float, float]],
+    df_raw: pd.DataFrame,
+) -> Tuple[Optional[float], Optional[float], Optional[float]]:
+    """
+    多特征自回归训练：每步预测后重新计算技术指标
+    
+    df_scaled: 归一化后的特征数据
+    feature_cols: 特征列名列表
+    target_col: 目标列名（通常是 'close'）
+    lookback: 回看窗口大小
+    epochs: 训练轮数
+    scaling_meta: 各列的归一化元数据 {col: (min, max)}
+    df_raw: 原始数据（包含 open, high, low, close, volume 等）
+    """
+    from ...utils.indicators import add_indicators
+    
+    if len(df_scaled) < lookback + 1:
+        return None, None, None
+    
+    target_idx = feature_cols.index(target_col) if target_col in feature_cols else 0
+    x_min, x_max = scaling_meta.get(target_col, (0.0, 1.0))
+    denom = x_max - x_min
+    if abs(denom) < 1e-12:
+        denom = 1.0
+    
+    losses: List[float] = []
+    se_scaled: List[float] = []
+    se_real: List[float] = []
+    
+    # 保留原始数据用于重新计算指标
+    df_base = df_raw[['date', 'open', 'high', 'low', 'close', 'volume']].copy()
+    if 'amount' in df_raw.columns:
+        df_base['amount'] = df_raw['amount']
+    
+    # 用于累积预测的历史数据
+    history_len = max(30, lookback)
+    df_history = df_base.tail(history_len).copy()
+    
+    for epoch in range(max(1, int(epochs))):
+        # 每轮开始时重置历史数据
+        df_history = df_base.tail(history_len).copy()
+        
+        for t in range(lookback, len(df_scaled)):
+            # 重新计算技术指标
+            df_with_indicators = add_indicators(df_history.copy())
+            
+            # 处理无穷值和空值
+            df_with_indicators = df_with_indicators.replace([np.inf, -np.inf], np.nan)
+            df_with_indicators = df_with_indicators.ffill().bfill()
+            
+            # 确保所有特征列存在
+            for col in feature_cols:
+                if col not in df_with_indicators.columns:
+                    df_with_indicators[col] = 0.0
+            
+            # 重新归一化
+            df_step_scaled = df_with_indicators.copy()
+            step_scaling = {}
+            for col in feature_cols:
+                vals = df_step_scaled[col].values
+                v_min = float(np.nanmin(vals))
+                v_max = float(np.nanmax(vals))
+                step_denom = v_max - v_min
+                if step_denom < 1e-12 or not np.isfinite(step_denom):
+                    df_step_scaled[col] = 0.0
+                else:
+                    df_step_scaled[col] = (vals - v_min) / step_denom
+                step_scaling[col] = (v_min, v_max)
+            
+            # 获取窗口
+            features = df_step_scaled[feature_cols].values.astype(np.float32)
+            if len(features) < lookback:
+                break
+            window = features[-lookback:].copy()
+            
+            # 预测
+            x = window.reshape((1, lookback, len(feature_cols))).astype(np.float32)
+            y_true_v = float(df_scaled[target_col].iloc[t])
+            y_true = np.asarray([[y_true_v]], dtype=np.float32)
+            
+            pred_v = float(model.predict(x, verbose=0)[0][0])
+            se_scaled.append(float((pred_v - y_true_v) ** 2))
+            
+            # 反归一化得到真实价格
+            step_x_min, step_x_max = step_scaling.get(target_col, (0.0, 1.0))
+            pred_real = pred_v * (step_x_max - step_x_min) + step_x_min
+            true_real = y_true_v * denom + x_min
+            se_real.append(float((pred_real - true_real) ** 2))
+            
+            # 训练一步
+            loss = model.train_on_batch(x, y_true)
+            loss_f = _as_float(loss)
+            if loss_f is not None:
+                losses.append(loss_f)
+            
+            # 更新历史数据：添加预测价格作为新的一行
+            last_row = df_history.iloc[-1].copy()
+            new_date = pd.Timestamp(last_row['date']) + timedelta(days=1)
+            
+            new_row = {
+                'date': new_date,
+                'open': pred_real,
+                'high': pred_real * 1.005,
+                'low': pred_real * 0.995,
+                'close': pred_real,
+                'volume': last_row.get('volume', 0),
+            }
+            if 'amount' in df_history.columns:
+                new_row['amount'] = last_row.get('amount', 0)
+            
+            df_history = pd.concat([df_history, pd.DataFrame([new_row])], ignore_index=True)
+            
+            # 保持历史长度
+            if len(df_history) > history_len + 50:
+                df_history = df_history.tail(history_len + 50).reset_index(drop=True)
+    
+    avg_loss = float(np.mean(losses)) if losses else None
+    mse_scaled = float(np.mean(se_scaled)) if se_scaled else None
+    mse_real = float(np.mean(se_real)) if se_real else None
+    return avg_loss, mse_scaled, mse_real
+
+
 def _save_state(paths: Dict[str, Path], state: Dict) -> None:
     try:
         _atomic_write_json(paths['state'], state)
@@ -662,6 +791,16 @@ def train_loop(cfg: TrainConfig) -> None:
     feature_count = len(feature_cols)
     print(f"[GRU] Multi-feature enabled: features={feature_cols} count={feature_count}")
 
+    # 设置 GPU 内存增长模式，避免显存不足
+    try:
+        import tensorflow as tf
+        gpus = tf.config.list_physical_devices('GPU')
+        for gpu in gpus:
+            tf.config.experimental.set_memory_growth(gpu, True)
+        print(f"[INFO] GPU memory growth enabled for {len(gpus)} GPU(s)", flush=True)
+    except Exception as e:
+        print(f"[WARN] Failed to set GPU memory growth: {e}", flush=True)
+
     model = build_gru_regression_model(
         lookback=int(cfg.lookback),
         feature_count=feature_count,
@@ -853,44 +992,55 @@ def train_loop(cfg: TrainConfig) -> None:
             mse_real = None
 
             if bool(getattr(cfg, 'autoregressive_training', False)):
-                # 自回归训练暂不支持多特征
-                print("[WARN] Autoregressive training not optimized for multi-feature. Running standard fit.", flush=True)
+                # 多特征自回归训练
+                print("[INFO] Running autoregressive training with multi-feature...", flush=True)
+                loss, mse_scaled, mse_real = _autoregressive_train_multi(
+                    model=model,
+                    df_scaled=df_scaled,
+                    feature_cols=valid_cols,
+                    target_col='close',
+                    lookback=int(cfg.lookback),
+                    epochs=int(cfg.epochs_per_stock),
+                    scaling_meta=scaling_meta,
+                    df_raw=df,
+                )
+                val_loss = None  # 自回归训练没有验证集
+            else:
+                x, y = _make_windows_multi(df_scaled, valid_cols, 'close', lookback=int(cfg.lookback))
+                hist = model.fit(
+                    x,
+                    y,
+                    epochs=int(cfg.epochs_per_stock),
+                    batch_size=int(cfg.batch_size),
+                    verbose=0,
+                    shuffle=True,
+                    validation_split=0.2,
+                )
 
-            x, y = _make_windows_multi(df_scaled, valid_cols, 'close', lookback=int(cfg.lookback))
-            hist = model.fit(
-                x,
-                y,
-                epochs=int(cfg.epochs_per_stock),
-                batch_size=int(cfg.batch_size),
-                verbose=0,
-                shuffle=True,
-                validation_split=0.2,
-            )
+                try:
+                    loss = float(hist.history.get('loss', [None])[-1])
+                    val_loss = float(hist.history.get('val_loss', [None])[-1])
+                except Exception:
+                    pass
 
-            try:
-                loss = float(hist.history.get('loss', [None])[-1])
-                val_loss = float(hist.history.get('val_loss', [None])[-1])
-            except Exception:
-                pass
+                # 计算 MSE（真实价格空间）- 仅标准模式
+                try:
+                    y_pred = model.predict(x, verbose=0).flatten()
+                    y_true = y.flatten()
+                    # 归一化空间的 MSE
+                    mse_scaled = float(np.mean((y_pred - y_true) ** 2))
+                    # 真实价格空间的 MSE
+                    x_min, x_max = scaling_meta.get('close', (0.0, 1.0))
+                    denom = x_max - x_min
+                    if abs(denom) < 1e-12:
+                        denom = 1.0
+                    y_pred_real = y_pred * denom + x_min
+                    y_true_real = y_true * denom + x_min
+                    mse_real = float(np.mean((y_pred_real - y_true_real) ** 2))
+                except Exception:
+                    pass
 
-            # 计算 MSE（真实价格空间）
-            try:
-                y_pred = model.predict(x, verbose=0).flatten()
-                y_true = y.flatten()
-                # 归一化空间的 MSE
-                mse_scaled = float(np.mean((y_pred - y_true) ** 2))
-                # 真实价格空间的 MSE
-                x_min, x_max = scaling_meta.get('close', (0.0, 1.0))
-                denom = x_max - x_min
-                if abs(denom) < 1e-12:
-                    denom = 1.0
-                y_pred_real = y_pred * denom + x_min
-                y_true_real = y_true * denom + x_min
-                mse_real = float(np.mean((y_pred_real - y_true_real) ** 2))
-            except Exception:
-                pass
-
-            samples_count = int(len(x))
+            samples_count = int(len(df_scaled)) if bool(getattr(cfg, 'autoregressive_training', False)) else int(len(x))
             row = {
                 'ts': _now_ts(),
                 'market_type': market_type,
