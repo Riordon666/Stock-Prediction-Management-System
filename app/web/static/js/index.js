@@ -34,14 +34,14 @@
     // 启动滚动新闻
     startTickerNews();
 
-    // 刷新按钮点击事件
+    // Refresh button click event
     $('.refresh-news-btn').click(function() {
         triggerRefreshBtnAnimation(this);
         isNewsExpanded = false;
         resetAutoFetchTimer();
         triggerNewsFetch(function () {
             loadLatestNews();
-            loadHotspots();
+            loadHotspots(true);  // Force refresh to bypass cache
             startTickerNews();
         });
     });
@@ -392,16 +392,18 @@ function loadLatestNews(silent = false, isRetry = false) {
     });
 }
 
-// 加载舆情热点函数
-function loadHotspots() {
+function loadHotspots(forceRefresh) {
     $('#hotspot-list').html('<div class="portal-loading">加载热点中...</div>');
+
+    var params = { limit: 10 };
+    if (forceRefresh) {
+        params.force = 1;
+    }
 
     $.ajax({
         url: '/api/hotspots',
         method: 'GET',
-        data: {
-            limit: 10
-        },
+        data: params,
         success: function(response) {
             if (response.success && response.items && response.items.length > 0) {
                 displayHotspots(response.items);

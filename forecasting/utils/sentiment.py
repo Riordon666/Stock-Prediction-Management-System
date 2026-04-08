@@ -21,7 +21,7 @@ class SentimentAnalyzer:
             # 增加对 HuggingFace 环境的连接性判断或直接捕捉所有加载异常
             # 使用一个更标准的基础模型，或者如果加载失败则彻底降级
             logger.info(f"Attempting to load sentiment model: {self.model_name}")
-            self.analyzer = pipeline("sentiment-analysis", model=self.model_name, device=-1)
+            self.analyzer = pipeline("sentiment-analysis", model=self.model_name, device=-1, framework='pt')
             self._initialized = True
             logger.info(f"Sentiment model {self.model_name} initialized.")
         except Exception as e:

@@ -511,6 +511,19 @@ def _autoregressive_train_multi(
             step_scaling = {}
             for col in feature_cols:
                 vals = df_step_scaled[col].values
+                # 处理 None 和非数值类型
+                try:
+                    vals = np.array([float(x) if x is not None and np.isfinite(float(x)) else np.nan for x in vals])
+                except (ValueError, TypeError):
+                    vals = np.full(len(vals), np.nan)
+                
+                # 检查是否有有效值
+                valid_vals = vals[np.isfinite(vals)]
+                if len(valid_vals) == 0:
+                    df_step_scaled[col] = 0.0
+                    step_scaling[col] = (0.0, 0.0)
+                    continue
+                    
                 v_min = float(np.nanmin(vals))
                 v_max = float(np.nanmax(vals))
                 step_denom = v_max - v_min
@@ -775,7 +788,7 @@ def train_loop(cfg: TrainConfig) -> None:
     if sample_df.empty:
         raise RuntimeError("Could not fetch sample data to initialize model.")
         
-    feature_cols = [c for c in sample_df.columns if c not in ['date', 'dt_str']]
+    feature_cols = [c for c in sample_df.columns if c not in ['date', 'dt_str', '股票代码']]
     feature_count = len(feature_cols)
     print(f"[LSTM] Multi-feature enabled: features={feature_cols} count={feature_count}")
 

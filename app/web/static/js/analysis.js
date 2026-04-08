@@ -6,6 +6,24 @@
     let renderedTabs = { price: false, indicators: false, volume: false };
     let chartTabsInitialized = false;
 
+    // Toast notification for copy success
+    function showToast(message) {
+        var toast = document.getElementById('copy-toast');
+        if (!toast) {
+            toast = document.createElement('div');
+            toast.id = 'copy-toast';
+            toast.className = 'copy-toast';
+            toast.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg><span>' + (message || 'copied') + '</span>';
+            document.body.appendChild(toast);
+        } else {
+            toast.querySelector('span').textContent = message || 'copied';
+        }
+        toast.classList.add('show');
+        setTimeout(function () {
+            toast.classList.remove('show');
+        }, 1500);
+    }
+
     (function () {
         function markCopied(el) {
             try {
@@ -49,6 +67,7 @@
             if (!code) return;
             copyText(code).then(function () {
                 markCopied(codeEl);
+                showToast('复制成功');
             }).catch(function () {
             });
         });

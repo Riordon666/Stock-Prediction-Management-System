@@ -34,6 +34,18 @@ load_dotenv()
 # 创建Flask应用实例
 app = Flask(__name__)
 
+# Performance optimizations
+app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 31536000  # 1 year cache for static files
+app.config['JSON_SORT_KEYS'] = False  # Faster JSON response
+app.config['JSONIFY_MIMETYPE'] = 'application/json; charset=utf-8'
+
+# Enable gzip compression for responses
+try:
+    from flask_compress import Compress
+    Compress(app)
+except ImportError:
+    pass  # flask-compress not installed, skip
+
 # 配置日志
 log_level = os.getenv('LOG_LEVEL', 'INFO').upper()
 log_file = os.getenv('LOG_FILE', 'data/logs/server.log')
@@ -321,42 +333,55 @@ def _fetch_tophubdata_hotspots(limit: int) -> Dict[str, Any]:
 
 def _fetch_tophub_today_hotspots(limit: int) -> Dict[str, Any]:
     try:
-        urls = [
-            'https://r.jina.ai/https://tophub.today/n/1VdJkxkeLQ',
-            'https://r.jina.ai/http://tophub.today/n/1VdJkxkeLQ',
-            'https://r.jina.ai/https://www.tophub.today/n/1VdJkxkeLQ',
-            'https://r.jina.ai/http://www.tophub.today/n/1VdJkxkeLQ',
-            'https://tophub.today/n/1VdJkxkeLQ',
+        jina_api_key = (os.getenv('JINA_API_KEY') or '').strip()
+        
+        # Try multiple proxy services to bypass 403
+        proxy_urls = [
+            # Jina AI reader with API key (preferred if available)
+            ('https://r.jina.ai/https://tophub.today/n/1VdJkxkeLQ', True),
+            # AllOrigins proxy
+            ('https://api.allorigins.win/raw?url=' + urllib.parse.quote('https://tophub.today/n/1VdJkxkeLQ', safe=''), False),
+            # Direct fetch (may work from user's IP)
+            ('https://tophub.today/n/1VdJkxkeLQ', False),
         ]
 
         raw = ''
         last_err: str = ''
-        for url in urls:
-            req = urllib.request.Request(
-                url,
-                headers={
-                    'Accept': 'text/plain,text/markdown,*/*',
-                    'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-                    'Accept-Encoding': 'identity',
-                    'User-Agent': 'Mozilla/5.0',
-                    'Referer': 'https://tophub.today/',
-                },
-                method='GET',
-            )
-
-            try:
-                raw = _urlopen_read_text(req, timeout=10)
-                if raw:
-                    break
-            except Exception as e:
-                last_err = f"{type(e).__name__}: {e}"
-                logger.warning('fetch tophub.today via jina failed url=%s err=%s', url, last_err)
+        for url, use_jina_auth in proxy_urls:
+            # Skip jina URL if no API key (will get 403)
+            if use_jina_auth and not jina_api_key:
                 continue
+                
+            for attempt in range(2):
+                timeout = 20 + attempt * 5
+                headers = {
+                    'Accept': 'text/html,application/xhtml+xml,text/plain,*/*',
+                    'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                }
+                
+                # Add Jina API key authentication
+                if use_jina_auth and jina_api_key:
+                    headers['Authorization'] = f'Bearer {jina_api_key}'
+                
+                req = urllib.request.Request(url, headers=headers, method='GET')
 
-        if not raw:
-            if last_err:
-                logger.warning('fetch tophub.today all urls failed last_err=%s', last_err)
-            return {'items': [], 'source': ''}
+                try:
+                    raw = _urlopen_read_text(req, timeout=timeout)
+                    if raw and len(raw) > 100 and 'security' not in raw.lower() and 'captcha' not in raw.lower():
+                        break
+                except Exception as e:
+                    last_err = f"{type(e).__name__}: {e}"
+                    continue
+            
+            if raw and len(raw) > 100 and 'security' not in raw.lower():
+                break
+            else:
+                logger.warning('fetch tophub via proxy failed url=%s err=%s', url[:50], last_err)
+
+        if not raw or 'security' in raw.lower():
+            # Fallback: try alternative hotspot sources
+            return _fetch_alternative_hotspots(limit)
 
         out: list[Dict[str, str]] = []
         seen = set()
@@ -408,6 +433,50 @@ def _fetch_tophub_today_hotspots(limit: int) -> Dict[str, Any]:
         return {'items': out, 'source': 'tophub_today'}
     except Exception as e:
         logger.warning('fetch tophub.today hotspots failed: %s', e)
+        return {'items': [], 'source': ''}
+
+
+def _fetch_alternative_hotspots(limit: int) -> Dict[str, Any]:
+    """Fallback hotspot source when tophub is blocked"""
+    try:
+        # Try cls.cn (same as news_fetcher) for hot news
+        url = 'https://www.cls.cn/api/sw'
+        req = urllib.request.Request(
+            url,
+            headers={
+                'Accept': 'application/json,*/*',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            },
+            method='GET',
+        )
+        
+        raw = _urlopen_read_text(req, timeout=15)
+        if not raw:
+            return {'items': [], 'source': ''}
+        
+        data = json.loads(raw)
+        items = []
+        
+        # Parse cls.cn format
+        if isinstance(data, dict):
+            for key in ['data', 'list', 'items', 'hot_list']:
+                if key in data and isinstance(data[key], list):
+                    for item in data[key][:limit]:
+                        if not isinstance(item, dict):
+                            continue
+                        title = item.get('title') or item.get('content') or ''
+                        link = item.get('url') or item.get('link') or 'https://www.cls.cn'
+                        if title:
+                            items.append({
+                                'title': str(title).strip()[:100],
+                                'url': str(link),
+                                'extra': ''
+                            })
+                    break
+        
+        return {'items': items, 'source': 'cls_cn'}
+    except Exception as e:
+        logger.warning('fetch alternative hotspots failed: %s', e)
         return {'items': [], 'source': ''}
 
 
@@ -472,6 +541,9 @@ def api_hotspots():
     except Exception:
         limit = 10
     limit = max(1, min(30, limit))
+    
+    # Force refresh to bypass cache
+    force_refresh = request.args.get('force') == '1'
 
     now = time.time()
     with _hotspot_lock:
@@ -487,15 +559,16 @@ def api_hotspots():
             _save_hotspot_cache(cache_data)
             cached_items = cleaned_cached
 
-        if isinstance(cached_items, list) and len(cached_items) > 0 and (now - cached_ts < 300):
+        # Skip cache if force_refresh is true
+        if not force_refresh and isinstance(cached_items, list) and len(cached_items) > 0 and (now - cached_ts < 300):
             return jsonify({
                 'success': True,
                 'items': cached_items,
                 'source': cached_source,
             })
 
-        # Avoid hammering upstream on repeated failures
-        if (not cached_items) and (now - cached_fail_ts < 20):
+        # Avoid hammering upstream on repeated failures (unless force refresh)
+        if not force_refresh and (not cached_items) and (now - cached_fail_ts < 20):
             return jsonify({
                 'success': True,
                 'items': [],
@@ -1309,16 +1382,23 @@ def api_predict_stock():
         history_keep_days = max(30, lookback)
         df_history = df.tail(history_keep_days).copy()
         
-        # 初始归一化
+        # Initial normalization
         def _normalize_df(df_in: pd.DataFrame, cols: list) -> tuple:
-            """归一化指定列，返回归一化后的df和scaling元数据"""
+            """Normalize specified columns, return normalized df and scaling metadata"""
             df_out = df_in.copy()
             scaling = {}
             for col in cols:
                 if col not in df_out.columns:
                     continue
-                vals = df_out[col].values
-                v_min, v_max = float(np.min(vals)), float(np.max(vals))
+                # Convert to numeric, handle dict/object types
+                try:
+                    vals = pd.to_numeric(df_out[col], errors='coerce').values
+                except Exception:
+                    vals = np.array([0.0] * len(df_out))
+                # Handle all-NaN case
+                if np.all(np.isnan(vals)):
+                    vals = np.array([0.0] * len(vals))
+                v_min, v_max = float(np.nanmin(vals)), float(np.nanmax(vals))
                 denom = v_max - v_min
                 if denom < 1e-12:
                     df_out[col] = 0.0
@@ -1333,6 +1413,18 @@ def api_predict_stock():
         # 预测循环：每步重新计算特征
         preds_real: list[float] = []
         df_predict_base = df_history.copy()  # 用于累积预测数据
+
+        # Estimate recent volatility (daily std of returns) to cap jumps
+        try:
+            close_hist = pd.to_numeric(df_predict_base['close'], errors='coerce').dropna()
+            ret = close_hist.pct_change().dropna()
+            vol = float(ret.tail(20).std()) if len(ret) >= 5 else float(ret.std())
+            if not np.isfinite(vol) or vol <= 0:
+                vol = 0.015
+        except Exception:
+            vol = 0.015
+        max_jump = max(0.02, min(0.08, 2.5 * vol))
+        ema_alpha = 0.55
         
         for step_idx in range(int(predict_days)):
             # 重新计算技术指标（基于当前累积的历史数据）
@@ -1370,7 +1462,26 @@ def api_predict_stock():
             
             # 反归一化（使用当前步骤的close min/max）
             step_close_min, step_close_max = scaling_step.get('close', (0.0, 1.0))
-            pred_real_val = y_pred * (step_close_max - step_close_min) + step_close_min
+            pred_raw = y_pred * (step_close_max - step_close_min) + step_close_min
+
+            prev_close = float(pd.to_numeric(df_predict_base['close'].iloc[-1], errors='coerce') or pred_raw)
+            if not np.isfinite(prev_close) or prev_close <= 0:
+                prev_close = float(pred_raw)
+
+            # Cap the day-to-day move to avoid extreme first-day jump
+            lo = prev_close * (1.0 - max_jump)
+            hi = prev_close * (1.0 + max_jump)
+            pred_capped = float(np.clip(pred_raw, lo, hi))
+
+            # Smooth with EMA to avoid flat line after first day
+            if step_idx == 0:
+                pred_real_val = prev_close + (pred_capped - prev_close) * 0.6
+            else:
+                pred_real_val = prev_close * (1.0 - ema_alpha) + pred_capped * ema_alpha
+
+            # Add tiny drift after day1 to prevent unrealistically flat forecasts
+            if step_idx >= 1:
+                pred_real_val = pred_real_val * (1.0 + (0.15 * vol))
             preds_real.append(pred_real_val)
             
             # 构造新的一行数据（用于下一次迭代）
@@ -1766,5 +1877,41 @@ def api_progress():
     return jsonify({'percent': int(data.get('percent') or 0), 'stage': data.get('stage') or ''}), 200
 
 
+# Model preload flag
+_models_preloaded = False
+
+
+def _ensure_models_preloaded():
+    """Ensure models are preloaded (works with gunicorn/uWSGI)."""
+    global _models_preloaded
+    if _models_preloaded:
+        return
+    _models_preloaded = True
+    _preload_models()
+
+
+@app.before_request
+def _preload_on_first_request():
+    """Preload models on first request (for production WSGI servers)."""
+    _ensure_models_preloaded()
+
+
+def _preload_models():
+    """Preload GRU and LSTM models at startup to speed up first prediction."""
+    logger.info('Preloading prediction models...')
+    for model_type in ['gru', 'lstm']:
+        try:
+            paths = _model_paths(model_type)
+            weights = paths['weights']
+            if weights.exists() and weights.stat().st_size > 0:
+                _load_prediction_model(model_type)
+                logger.info(f'{model_type.upper()} model preloaded successfully')
+            else:
+                logger.info(f'{model_type.upper()} model weights not found, skip preload')
+        except Exception as e:
+            logger.warning(f'Failed to preload {model_type.upper()} model: {e}')
+
+
 if __name__ == '__main__':
+    _ensure_models_preloaded()
     app.run(host='0.0.0.0', port=int(os.getenv("PORT", "8888")), debug=True)

@@ -277,3 +277,74 @@
         });
     });
 })();
+
+// Copy functionality with toast notification
+(function () {
+    function showToast(message) {
+        var toast = document.getElementById('copy-toast');
+        if (!toast) {
+            toast = document.createElement('div');
+            toast.id = 'copy-toast';
+            toast.className = 'copy-toast';
+            toast.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg><span></span>';
+            document.body.appendChild(toast);
+        }
+        toast.querySelector('span').textContent = message || 'copied';
+        toast.classList.add('show');
+        setTimeout(function () {
+            toast.classList.remove('show');
+        }, 1500);
+    }
+
+    function copyText(text) {
+        if (!text) return Promise.reject(new Error('empty'));
+        if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+            return navigator.clipboard.writeText(text);
+        }
+        return new Promise(function (resolve, reject) {
+            try {
+                var ta = document.createElement('textarea');
+                ta.value = text;
+                ta.setAttribute('readonly', '');
+                ta.style.position = 'fixed';
+                ta.style.opacity = '0';
+                ta.style.left = '-9999px';
+                document.body.appendChild(ta);
+                ta.select();
+                var ok = document.execCommand('copy');
+                document.body.removeChild(ta);
+                ok ? resolve() : reject(new Error('copy failed'));
+            } catch (e) {
+                reject(e);
+            }
+        });
+    }
+
+    document.addEventListener('click', function (e) {
+        var target = e && e.target;
+        if (!target) return;
+        var copyEl = target.closest ? target.closest('.footer-link-copy') : null;
+        if (!copyEl) return;
+        var text = (copyEl.getAttribute('data-copy') || '').trim();
+        if (!text) return;
+        e.preventDefault();
+        e.stopPropagation();
+        copyText(text).then(function () {
+            showToast('复制成功');
+        }).catch(function () {});
+    });
+
+    // Also handle keyboard activation for accessibility
+    document.addEventListener('keydown', function (e) {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        var target = e && e.target;
+        if (!target) return;
+        if (!target.classList || !target.classList.contains('footer-link-copy')) return;
+        var text = (target.getAttribute('data-copy') || '').trim();
+        if (!text) return;
+        e.preventDefault();
+        copyText(text).then(function () {
+            showToast('复制成功');
+        }).catch(function () {});
+    });
+})();
