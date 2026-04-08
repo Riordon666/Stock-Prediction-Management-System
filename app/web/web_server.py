@@ -336,11 +336,14 @@ def _fetch_tophub_today_hotspots(limit: int) -> Dict[str, Any]:
         jina_api_key = (os.getenv('JINA_API_KEY') or '').strip()
         
         # Try multiple proxy services to bypass 403
+        # Order: most reliable for China servers first
         proxy_urls = [
-            # Jina AI reader with API key (preferred if available)
-            ('https://r.jina.ai/https://tophub.today/n/1VdJkxkeLQ', True),
+            # Codetabs proxy (works well in China)
+            ('https://api.codetabs.com/v1/proxy?quest=' + urllib.parse.quote('https://tophub.today/n/1VdJkxkeLQ', safe=''), False),
             # AllOrigins proxy
             ('https://api.allorigins.win/raw?url=' + urllib.parse.quote('https://tophub.today/n/1VdJkxkeLQ', safe=''), False),
+            # Jina AI reader with API key (may be blocked in some regions)
+            ('https://r.jina.ai/https://tophub.today/n/1VdJkxkeLQ', True),
             # Direct fetch (may work from user's IP)
             ('https://tophub.today/n/1VdJkxkeLQ', False),
         ]
