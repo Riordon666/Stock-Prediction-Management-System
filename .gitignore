@@ -3,3 +3,11 @@
 /data/news/
 /data/logs/
 /py.ini
+
+# Python
+__pycache__/
+*.py[cod]
+
+# IDE
+.idea/
+.vscode/
