@@ -28,7 +28,7 @@ class AkshareAdapter(BaseAdapter):
     _YAHOO_NAME_TTL_SECONDS = 7 * 24 * 60 * 60
     _HK_HIST_FAIL_WINDOW_SECONDS = 120
     _HK_HIST_FAIL_LIMIT = 3
-    _HK_HIST_BLOCK_SECONDS = 600
+    _HK_HIST_BLOCK_SECONDS = 60  # Reduced from 600s to 60s
     _HK_HIST_TIMEOUT_SECONDS = 8
 
     # 字段映射：统一不同数据源的返回格式
@@ -142,7 +142,9 @@ class AkshareAdapter(BaseAdapter):
             )
             with urllib.request.urlopen(req, timeout=10) as resp:
                 raw = resp.read().decode('utf-8', errors='ignore')
-        except Exception:
+            logger.debug(f'Tencent HK API response length: {len(raw)} for {symbol}')
+        except Exception as e:
+            logger.warning(f'Tencent HK API request failed: {e}')
             return pd.DataFrame()
 
         raw = (raw or '').strip()
@@ -668,6 +670,24 @@ class AkshareAdapter(BaseAdapter):
                         return df
                 except Exception as exc:
                     self._record_hk_hist_failure(exc)
+
+            # Try sina HK (stock_hk_daily) as fallback
+            try:
+                df = ak.stock_hk_daily(symbol=hk_code, adjust="qfq")
+                if df is not None and not df.empty:
+                    if 'date' in df.columns:
+                        df['date'] = pd.to_datetime(df['date'], errors='coerce')
+                        start_dt = pd.to_datetime(start_date, errors='coerce')
+                        end_dt = pd.to_datetime(end_date, errors='coerce')
+                        if pd.notna(start_dt):
+                            df = df[df['date'] >= start_dt]
+                        if pd.notna(end_dt):
+                            df = df[df['date'] <= end_dt]
+                    if 'amount' not in df.columns:
+                        df['amount'] = None
+                    return df
+            except Exception:
+                pass
 
             df = self._fetch_hk_history_tencent(hk_code, start_date, end_date)
             if df is not None and not df.empty:
