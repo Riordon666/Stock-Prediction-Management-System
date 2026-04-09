@@ -250,9 +250,16 @@ def _sanitize_hotspot_title(title: Any) -> str:
 
     t = re.sub(r'^\s*!\[', '', t)
     t = re.sub(r'\]\s*$', '', t)
-    t = re.sub(r'^\s*Image\s*\d+\s*[:：]\s*', '', t, flags=re.IGNORECASE)
+    t = re.sub(r'^\s*Image\s*\d+\s*[::]\s*', '', t, flags=re.IGNORECASE)
     t = re.sub(r'^\s*Image\s*\d+\s*$', '', t, flags=re.IGNORECASE)
-    t = t.strip(' \t\r\n-—–|:：')
+    t = t.strip(' \t\r\n-:|::')
+    
+    # Filter out email addresses and invalid patterns
+    if re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', t):
+        return ''  # Skip email addresses
+    if re.search(r'@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', t):
+        return ''  # Skip text containing email
+    
     return t.strip()
 
 
@@ -386,6 +393,17 @@ def _fetch_tophub_today_hotspots(limit: int) -> Dict[str, Any]:
             # Fallback: try alternative hotspot sources
             return _fetch_alternative_hotspots(limit)
 
+        # Validate raw content - must contain tophub-like structure
+        # Reject if it looks like error page, captcha, or unrelated content
+        raw_lower = raw.lower()
+        invalid_patterns = ['captcha', 'cloudflare', 'access denied', 'forbidden', 
+                           'error', 'login', 'sign in', 'timeout', 'gateway']
+        if any(p in raw_lower for p in invalid_patterns):
+            # Check if it actually has tophub content markers
+            if 'tophub' not in raw_lower and 'zhihu' not in raw_lower and 'weibo' not in raw_lower:
+                logger.warning('tophub raw content appears invalid, skipping parse')
+                return _fetch_alternative_hotspots(limit)
+
         out: list[Dict[str, str]] = []
         seen = set()
         
@@ -432,6 +450,8 @@ def _fetch_tophub_today_hotspots(limit: int) -> Dict[str, Any]:
         if not out:
             sample = raw[:600].replace('\r', ' ').replace('\n', ' ')
             logger.warning('tophub.today parse yielded 0 items. raw_sample=%s', sample)
+            # Return empty to let caller try next source
+            return {'items': [], 'source': ''}
 
         return {'items': out, 'source': 'tophub_today'}
     except Exception as e:
@@ -440,48 +460,65 @@ def _fetch_tophub_today_hotspots(limit: int) -> Dict[str, Any]:
 
 
 def _fetch_alternative_hotspots(limit: int) -> Dict[str, Any]:
-    """Fallback hotspot source when tophub is blocked"""
+    """Fetch hotspots from cls.cn telegraph (Cailian Press)"""
+    items = []
+    
+    # Try cls.cn telegraph page
     try:
-        # Try cls.cn (same as news_fetcher) for hot news
-        url = 'https://www.cls.cn/api/sw'
+        url = 'https://www.cls.cn/telegraph'
         req = urllib.request.Request(
             url,
             headers={
-                'Accept': 'application/json,*/*',
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Accept': 'text/html,application/xhtml+xml,*/*',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept-Language': 'zh-CN,zh;q=0.9',
             },
             method='GET',
         )
         
         raw = _urlopen_read_text(req, timeout=15)
-        if not raw:
-            return {'items': [], 'source': ''}
-        
-        data = json.loads(raw)
-        items = []
-        
-        # Parse cls.cn format
-        if isinstance(data, dict):
-            for key in ['data', 'list', 'items', 'hot_list']:
-                if key in data and isinstance(data[key], list):
-                    for item in data[key][:limit]:
-                        if not isinstance(item, dict):
-                            continue
+        if raw and len(raw) > 500:
+            # cls.cn uses Next.js, data is in __NEXT_DATA__ script
+            m = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', raw, re.DOTALL)
+            if m:
+                try:
+                    j = json.loads(m.group(1))
+                    # Navigate: props.initialState.telegraph.telegraphList
+                    props = j.get('props') or {}
+                    initial = props.get('initialState') or {}
+                    telegraph = initial.get('telegraph') or {}
+                    tlist = telegraph.get('telegraphList') or []
+                    
+                    for item in tlist:
+                        if len(items) >= limit:
+                            break
+                        # Use title or content field
                         title = item.get('title') or item.get('content') or ''
-                        link = item.get('url') or item.get('link') or 'https://www.cls.cn'
-                        if title:
-                            items.append({
-                                'title': str(title).strip()[:100],
-                                'url': str(link),
-                                'extra': ''
-                            })
-                    break
-        
-        return {'items': items, 'source': 'cls_cn'}
+                        if not title:
+                            continue
+                        # Prefer share url provided by cls.cn; field is 'shareurl' (lowercase)
+                        link = (
+                            item.get('shareurl')
+                            or item.get('share_url')
+                            or item.get('shareUrl')
+                            or item.get('url')
+                            or 'https://www.cls.cn/telegraph'
+                        )
+                        items.append({
+                            'title': str(title).strip()[:100],
+                            'url': link,
+                            'extra': ''
+                        })
+                    
+                    if items:
+                        logger.info(f'fetched {len(items)} hotspots from cls.cn telegraph')
+                        return {'items': items, 'source': 'cls_cn'}
+                except Exception as e:
+                    logger.warning('parse cls.cn json failed: %s', e)
     except Exception as e:
-        logger.warning('fetch alternative hotspots failed: %s', e)
-        return {'items': [], 'source': ''}
-
+        logger.warning('fetch cls.cn telegraph failed: %s', e)
+    
+    return {'items': items, 'source': 'cls_cn' if items else ''}
 
 @app.route('/api/latest_news')
 def api_latest_news():
@@ -578,9 +615,12 @@ def api_hotspots():
                 'source': cached_source,
             })
 
-    data = _fetch_tophubdata_hotspots(limit)
+    # Fetch order: tophub.today (works locally) -> tophubdata -> cls.cn (fallback)
+    data = _fetch_tophub_today_hotspots(limit)
     if not (data.get('items') or []):
-        data = _fetch_tophub_today_hotspots(limit)
+        data = _fetch_tophubdata_hotspots(limit)
+    if not (data.get('items') or []):
+        data = _fetch_alternative_hotspots(limit)
 
     items = data.get('items') or []
     source = data.get('source') or ''
