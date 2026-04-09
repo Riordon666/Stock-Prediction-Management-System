@@ -1407,7 +1407,13 @@ def api_predict_stock():
                                             end_date=end.strftime('%Y%m%d'), adjust='qfq', market_type=market_type)
         
         if df_raw is None or df_raw.empty:
-            return jsonify({'success': False, 'error': f'无法获取 {code} 的历史数据'}), 400
+            market_hint = {
+                'HK': 'HK stock data may be blocked by server network. Try A-shares instead.',
+                'US': 'US stock data may be blocked by server network. Try A-shares instead.',
+                'A': 'A-share data source may be temporarily unavailable.',
+            }
+            hint = market_hint.get(market_type, '')
+            return jsonify({'success': False, 'error': f'Unable to fetch historical data for {code} ({market_type}). {hint}'}), 400
 
         # 特征工程
         from forecasting.core.feature_engine import get_feature_engine

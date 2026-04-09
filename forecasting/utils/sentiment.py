@@ -1,4 +1,10 @@
 # -*- coding: utf-8 -*-
+import os
+# Set offline mode BEFORE importing transformers to avoid long connection retries
+os.environ.setdefault('TRANSFORMERS_OFFLINE', '1')
+os.environ.setdefault('HF_DATASETS_OFFLINE', '1')
+os.environ.setdefault('HF_HUB_OFFLINE', '1')
+
 import logging
 from typing import List, Dict, Optional
 import numpy as np
