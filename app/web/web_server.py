@@ -341,16 +341,16 @@ def _fetch_tophubdata_hotspots(limit: int) -> Dict[str, Any]:
 def _fetch_tophub_today_hotspots(limit: int) -> Dict[str, Any]:
     try:
         jina_api_key = (os.getenv('JINA_API_KEY') or '').strip()
-        
+
         # Try multiple proxy services to bypass 403
         # Order: most reliable for China servers first
         proxy_urls = [
-            # Codetabs proxy (works well in China)
-            ('https://api.codetabs.com/v1/proxy?quest=' + urllib.parse.quote('https://tophub.today/n/1VdJkxkeLQ', safe=''), False),
-            # AllOrigins proxy
-            ('https://api.allorigins.win/raw?url=' + urllib.parse.quote('https://tophub.today/n/1VdJkxkeLQ', safe=''), False),
-            # Jina AI reader with API key (may be blocked in some regions)
+            # Codetabs proxy (works well in China, needs trailing slash)
+            ('https://api.codetabs.com/v1/proxy/?quest=' + urllib.parse.quote('https://tophub.today/n/1VdJkxkeLQ', safe=''), False),
+            # Jina AI reader (may be blocked in some regions)
             ('https://r.jina.ai/https://tophub.today/n/1VdJkxkeLQ', True),
+            # AllOrigins proxy (often times out)
+            ('https://api.allorigins.win/raw?url=' + urllib.parse.quote('https://tophub.today/n/1VdJkxkeLQ', safe=''), False),
             # Direct fetch (may work from user's IP)
             ('https://tophub.today/n/1VdJkxkeLQ', False),
         ]
@@ -358,10 +358,8 @@ def _fetch_tophub_today_hotspots(limit: int) -> Dict[str, Any]:
         raw = ''
         last_err: str = ''
         for url, use_jina_auth in proxy_urls:
-            # Skip jina URL if no API key (will get 403)
-            if use_jina_auth and not jina_api_key:
-                continue
-                
+            # Jina AI works without key, so don't skip it
+
             for attempt in range(2):
                 timeout = 20 + attempt * 5
                 headers = {
@@ -369,11 +367,11 @@ def _fetch_tophub_today_hotspots(limit: int) -> Dict[str, Any]:
                     'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                 }
-                
-                # Add Jina API key authentication
+
+                # Add Jina API key authentication if available
                 if use_jina_auth and jina_api_key:
                     headers['Authorization'] = f'Bearer {jina_api_key}'
-                
+
                 req = urllib.request.Request(url, headers=headers, method='GET')
 
                 try:
@@ -383,7 +381,7 @@ def _fetch_tophub_today_hotspots(limit: int) -> Dict[str, Any]:
                 except Exception as e:
                     last_err = f"{type(e).__name__}: {e}"
                     continue
-            
+
             if raw and len(raw) > 100 and 'security' not in raw.lower():
                 break
             else:
@@ -460,10 +458,57 @@ def _fetch_tophub_today_hotspots(limit: int) -> Dict[str, Any]:
 
 
 def _fetch_alternative_hotspots(limit: int) -> Dict[str, Any]:
-    """Fetch hotspots from cls.cn telegraph (Cailian Press)"""
+    """Fetch hotspots from cls.cn - sort by share_num to get hot articles"""
     items = []
-    
-    # Try cls.cn telegraph page
+
+    # Try cls.cn telegraph API directly (faster than parsing HTML)
+    try:
+        url = 'https://www.cls.cn/nodeapi/updateTelegraphList'
+        req = urllib.request.Request(
+            url,
+            headers={
+                'Accept': 'application/json,*/*',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Referer': 'https://www.cls.cn/',
+            },
+            method='GET',
+        )
+
+        raw = _urlopen_read_text(req, timeout=10)
+        if raw:
+            j = json.loads(raw)
+            data = j.get('data') or {}
+            roll_data = data.get('roll_data') or []
+
+            # Sort by share_num (descending) to get hot articles
+            sorted_items = sorted(
+                roll_data,
+                key=lambda x: int(x.get('share_num') or 0),
+                reverse=True
+            )
+
+            for item in sorted_items:
+                if len(items) >= limit:
+                    break
+                title = item.get('title') or item.get('content') or ''
+                if not title:
+                    continue
+                link = item.get('shareurl') or f"https://www.cls.cn/detail/{item.get('id')}"
+                share_num = item.get('share_num') or 0
+                items.append({
+                    'title': str(title).strip()[:100],
+                    'url': link,
+                    'extra': f'-share_num:{share_num}'
+                })
+
+            if items:
+                logger.info(f'fetched {len(items)} hotspots from cls.cn API (sorted by share_num)')
+                return {'items': items, 'source': 'cls_cn_hot'}
+
+    except Exception as e:
+        logger.warning('fetch cls.cn telegraph API failed: %s', e)
+
+    # Fallback: Try cls.cn telegraph page HTML parsing
     try:
         url = 'https://www.cls.cn/telegraph'
         req = urllib.request.Request(
@@ -475,28 +520,31 @@ def _fetch_alternative_hotspots(limit: int) -> Dict[str, Any]:
             },
             method='GET',
         )
-        
+
         raw = _urlopen_read_text(req, timeout=15)
         if raw and len(raw) > 500:
-            # cls.cn uses Next.js, data is in __NEXT_DATA__ script
             m = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', raw, re.DOTALL)
             if m:
                 try:
                     j = json.loads(m.group(1))
-                    # Navigate: props.initialState.telegraph.telegraphList
                     props = j.get('props') or {}
                     initial = props.get('initialState') or {}
                     telegraph = initial.get('telegraph') or {}
                     tlist = telegraph.get('telegraphList') or []
-                    
-                    for item in tlist:
+
+                    # Sort by share_num (descending) to get hot articles
+                    sorted_items = sorted(
+                        tlist,
+                        key=lambda x: int(x.get('share_num') or 0),
+                        reverse=True
+                    )
+
+                    for item in sorted_items:
                         if len(items) >= limit:
                             break
-                        # Use title or content field
                         title = item.get('title') or item.get('content') or ''
                         if not title:
                             continue
-                        # Prefer share url provided by cls.cn; field is 'shareurl' (lowercase)
                         link = (
                             item.get('shareurl')
                             or item.get('share_url')
@@ -504,21 +552,23 @@ def _fetch_alternative_hotspots(limit: int) -> Dict[str, Any]:
                             or item.get('url')
                             or 'https://www.cls.cn/telegraph'
                         )
+                        share_num = item.get('share_num') or 0
                         items.append({
                             'title': str(title).strip()[:100],
                             'url': link,
-                            'extra': ''
+                            'extra': f'hot:{share_num}'
                         })
-                    
+
                     if items:
-                        logger.info(f'fetched {len(items)} hotspots from cls.cn telegraph')
-                        return {'items': items, 'source': 'cls_cn'}
+                        logger.info(f'fetched {len(items)} hotspots from cls.cn telegraph (sorted by share_num)')
+                        return {'items': items, 'source': 'cls_cn_hot'}
                 except Exception as e:
                     logger.warning('parse cls.cn json failed: %s', e)
     except Exception as e:
         logger.warning('fetch cls.cn telegraph failed: %s', e)
-    
-    return {'items': items, 'source': 'cls_cn' if items else ''}
+
+    return {'items': items, 'source': 'cls_cn_hot' if items else ''}
+
 
 @app.route('/api/latest_news')
 def api_latest_news():
