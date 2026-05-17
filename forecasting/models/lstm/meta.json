@@ -17,10 +17,6 @@
     "low",
     "volume",
     "amount",
-    "振幅",
-    "涨跌幅",
-    "涨跌额",
-    "换手率",
     "ma5",
     "ma10",
     "ma20",
@@ -38,7 +34,7 @@
     "change",
     "sentiment"
   ],
-  "feature_count": 26,
+  "feature_count": 22,
   "run_id": 7,
   "autoregressive_training": true
 }

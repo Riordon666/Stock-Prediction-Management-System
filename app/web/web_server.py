@@ -1402,6 +1402,74 @@ def _load_prediction_model(model_type: str = 'gru') -> Any:
     try:
         model.load_weights(str(weights))
     except Exception as e:
+        err_msg = str(e)
+        # Shape mismatch: meta declares wrong feature_count, try to auto-fix
+        if 'Shape mismatch' in err_msg or 'shape' in err_msg.lower():
+            logger.warning('%s shape mismatch detected: %s. Attempting auto-fix...', model_type.upper(), err_msg)
+            try:
+                import h5py
+                with h5py.File(str(weights), 'r') as f:
+                    all_arrays = []
+                    def _collect(g):
+                        for k, v in g.items():
+                            if hasattr(v, 'keys'):
+                                _collect(v)
+                            else:
+                                try:
+                                    all.append(v[()])
+                                except Exception:
+                                    pass
+                    # Find kernel shape from first GRU/LSTM cell
+                    for key in f.keys():
+                        grp = f[key]
+                        if hasattr(grp, 'keys'):
+                            for sub_key in grp.keys():
+                                sub = grp[sub_key]
+                                if hasattr(sub, 'keys'):
+                                    for name, ds in sub.items():
+                                        if 'kernel' in name.lower() and hasattr(ds, 'shape'):
+                                            actual_input_dim = int(ds.shape[0])
+                                            if actual_input_dim != feature_count:
+                                                logger.info(
+                                                    'Auto-fixing feature_count: meta=%d actual=%d',
+                                                    feature_count, actual_input_dim,
+                                                )
+                                                feature_count = actual_input_dim
+                                                meta['feature_count'] = actual_input_dim
+                                                # Rebuild feature_cols to match
+                                                if len(feature_cols) > actual_input_dim:
+                                                    meta['feature_cols'] = feature_cols[:actual_input_dim]
+                                                break
+            except Exception:
+                pass
+
+            if feature_count != int(meta.get('feature_count') or feature_count):
+                # Rebuild model with corrected feature_count
+                if model_type == 'gru':
+                    from forecasting.models.gru.model import build_gru_regression_model
+                    model = build_gru_regression_model(
+                        lookback=lookback, feature_count=feature_count,
+                        units=units, layers=layers, dropout=dropout, learning_rate=learning_rate,
+                    )
+                elif model_type == 'lstm':
+                    from forecasting.models.lstm.model import build_lstm_regression_model
+                    model = build_lstm_regression_model(
+                        lookback=lookback, feature_count=feature_count,
+                        units=units, layers=layers, dropout=dropout, learning_rate=learning_rate,
+                    )
+                try:
+                    model.build((None, int(lookback), feature_count))
+                except Exception:
+                    pass
+                try:
+                    model.load_weights(str(weights))
+                    cache['model'] = model
+                    cache['meta'] = meta
+                    cache['mtime'] = mtime
+                    return model
+                except Exception:
+                    pass
+
         if model_type == 'gru':
              if _manual_load_gru_weights_from_h5(model, weights):
                 cache['model'] = model
