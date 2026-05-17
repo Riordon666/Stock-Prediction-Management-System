@@ -498,7 +498,7 @@ def _fetch_alternative_hotspots(limit: int) -> Dict[str, Any]:
                 items.append({
                     'title': str(title).strip()[:100],
                     'url': link,
-                    'extra': f'-share_num:{share_num}'
+                    'extra': f'-分享数:{share_num}'
                 })
 
             if items:

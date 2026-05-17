@@ -1,6 +1,6 @@
 {
-  "ts": 1772541016.8524632,
-  "universe_key": "db27c2780c96a4c2a5426b205d1c9c54d530bd22f4040949a991d83a30a75c79",
+  "ts": 1778326998.3932512,
+  "universe_key": "53965343bf29a7e2783acca07200bd6c8f8a0278c14fc9c52dbc504467ff89b8",
   "universe_size": 1800,
   "lookback": 30,
   "total_days": 50,
@@ -15,8 +15,12 @@
     "close",
     "high",
     "low",
-    "amount",
     "volume",
+    "amount",
+    "振幅",
+    "涨跌幅",
+    "涨跌额",
+    "换手率",
     "ma5",
     "ma10",
     "ma20",
@@ -34,7 +38,7 @@
     "change",
     "sentiment"
   ],
-  "feature_count": 22,
-  "run_id": 5,
+  "feature_count": 26,
+  "run_id": 7,
   "autoregressive_training": true
 }
