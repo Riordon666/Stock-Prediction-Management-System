@@ -1,0 +1,31 @@
+/* ── Shader Background Canvas ── */
+.shader-bg-canvas {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    z-index: 0;
+    pointer-events: none;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.45s cubic-bezier(0.2, 0.9, 0.2, 1), visibility 0s linear 0.45s;
+    will-change: opacity;
+}
+
+.shader-bg-canvas.shader-bg-visible {
+    opacity: 1;
+    visibility: visible;
+    transition: opacity 0.45s cubic-bezier(0.2, 0.9, 0.2, 1), visibility 0s linear 0s;
+}
+
+/* Override html.light background when shader is active */
+html.light.shader-active {
+    background: transparent;
+}
+
+/* Hide the grid overlay when shader is active so it shows through */
+html.light.shader-active body.light::before {
+    opacity: 0;
+    transition: opacity 0.45s ease;
+}
