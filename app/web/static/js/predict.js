@@ -180,7 +180,10 @@
         try {
             const lastReal = history[history.length - 1];
             const firstPred = forecast[0];
-            $('#predict-summary').text(
+            const stockNameHtml = data.stock_name ? 
+                `<span class="predict-stock-title" style="color: var(--text); font-size: 14px; font-weight: 800; margin-right: 16px;">${data.stock_name} (${data.stock_code})</span>` : '';
+            $('#predict-summary').html(
+                stockNameHtml +
                 '最近收盘：' + prefix + formatNumber(lastReal && lastReal.close, 2) +
                 '；预测第1天：' + prefix + formatNumber(firstPred && firstPred.close, 2)
             );

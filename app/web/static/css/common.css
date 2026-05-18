@@ -23,7 +23,7 @@ html, body { min-height: 100%; }
 html { -webkit-text-size-adjust: 100%; }
 
 html {
-    background: #0b1220;
+    background: #000;
 }
 
 html.light {
@@ -107,117 +107,6 @@ body.light .container {
     z-index: 1;
 }
 
-.matrix-container {
-    position: fixed;
-    inset: 0;
-    width: 100%;
-    height: 100%;
-    background: #000;
-    display: flex;
-    z-index: 0;
-    overflow: hidden;
-    pointer-events: none;
-}
-
-body.light .matrix-container {
-    display: none;
-}
-
-.matrix-pattern {
-    position: relative;
-    width: 1000px;
-    height: 100%;
-    flex-shrink: 0;
-}
-
-.matrix-column {
-    position: absolute;
-    top: -100%;
-    width: 20px;
-    height: 100%;
-    font-size: 16px;
-    line-height: 18px;
-    font-weight: bold;
-    animation: fall linear infinite;
-    white-space: nowrap;
-}
-
-.matrix-column::before {
-    content: "OPEN HIGH LOW CLOSE VOL MA5 MA10 MA20 RSI MACD KDJ EMA SMA BOLL 600519 000001 300750 NASDAQ NYSE HKEX SH SZ +1.23% -0.87% 09:30 15:00";
-    position: absolute;
-    top: 0;
-    left: 0;
-    background: linear-gradient(
-        to bottom,
-        #ffffff 0%,
-        #ffffff 5%,
-        #00ff41 10%,
-        #00ff41 20%,
-        #00dd33 30%,
-        #00bb22 40%,
-        #009911 50%,
-        #007700 60%,
-        #005500 70%,
-        #003300 80%,
-        rgba(0, 255, 65, 0.5) 90%,
-        transparent 100%
-    );
-    -webkit-background-clip: text;
-    background-clip: text;
-    -webkit-text-fill-color: transparent;
-    writing-mode: vertical-lr;
-    letter-spacing: 1px;
-    text-rendering: optimizeLegibility;
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
-}
-
-.matrix-column.v1::before {
-    content: "SELECT FROM WHERE JOIN INDEX MODEL PREDICT TRAIN TEST SCORE API JSON Flask Pandas NumPy SKLearn TensorFlow 0.001 0.01 0.1 True False None";
-}
-
-.matrix-column.v2::before {
-    content: "0123456789 09:30 10:00 11:30 13:00 14:57 +0.56% -1.23% 3567 9821 12003 58900 2717831140";
-}
-
-.matrix-column.v3::before {
-    content: "Δ Σ λ μ θ α β γ 0123456789 + - % = MA RSI MACD VOL INDEX SIGNAL 666";
-}
-
-.matrix-column.v4::before {
-    content: "ンヲロヨモホノトソコオレメヘネテセケエルユムフヌツスクウリミヒニチシキイワラヤマハナタサカア";
-}
-
-.matrix-column.v5::before {
-    content: "THIS IS A GRADUATION PROJECT DESIGNED BY XWJ/RIORDON THIS IS A GRADUATION PROJECT DESIGNED BY XWJ/RIORDON";
-}
-
-@keyframes fall {
-    0% {
-        transform: translateY(-10%);
-        opacity: 1;
-    }
-    100% {
-        transform: translateY(100%);
-        opacity: 0;
-    }
-}
-
-@media (max-width: 768px) {
-    .matrix-column {
-        font-size: 14px;
-        line-height: 16px;
-        width: 18px;
-    }
-}
-
-@media (max-width: 480px) {
-    .matrix-column {
-        font-size: 12px;
-        line-height: 14px;
-        width: 15px;
-    }
-}
 
 ::view-transition-old(root),
 ::view-transition-new(root) {
@@ -875,6 +764,40 @@ body.light .footer-link:hover .footer-icon {
 }
 
 /* Toast notification for copy success */
+/* Theme switch warning toast */
+.theme-toast {
+  position: fixed;
+  top: 80px;
+  left: 50%;
+  transform: translateX(-50%) translateY(-20px);
+  background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+  color: #fff;
+  padding: 10px 24px;
+  border-radius: 24px;
+  font-size: 14px;
+  font-weight: 600;
+  box-shadow: 0 4px 20px rgba(245, 158, 11, 0.35);
+  opacity: 0;
+  visibility: hidden;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.theme-toast.show {
+  opacity: 1;
+  visibility: visible;
+  transform: translateX(-50%) translateY(0);
+}
+
+.theme-toast svg {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+
 .copy-toast {
   position: fixed;
   bottom: 80px;

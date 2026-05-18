@@ -35,9 +35,18 @@ load_dotenv()
 app = Flask(__name__)
 
 # Performance optimizations
-app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 31536000  # 1 year cache for static files
+app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0  # No cache for development
 app.config['JSON_SORT_KEYS'] = False  # Faster JSON response
 app.config['JSONIFY_MIMETYPE'] = 'application/json; charset=utf-8'
+
+# Disable caching for development
+@app.after_request
+def add_no_cache_headers(response):
+    if request.path.startswith('/static/'):
+        response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+        response.headers['Pragma'] = 'no-cache'
+        response.headers['Expires'] = '0'
+    return response
 
 # Enable gzip compression for responses
 try:
@@ -1521,6 +1530,47 @@ def api_predict_stock():
         start = end - timedelta(days=fetch_days * 2)
 
         provider = get_data_provider()
+        
+        # Fetch stock name
+        stock_name = code
+        try:
+            info = provider.get_stock_info(code, market_type=market_type) or {}
+            mt = (market_type or 'A').strip().upper()
+            if mt == 'HK':
+                stock_name = _pick_first_non_empty(info, [
+                    'comcnname',
+                    '股票简称',
+                    '名称',
+                    'comenname',
+                    'org_short_name_cn',
+                    'org_name_cn',
+                    'org_short_name_en',
+                    'org_name_en',
+                    'code_name',
+                ]) or stock_name
+            elif mt == 'US':
+                stock_name = _pick_first_non_empty(info, [
+                    'org_short_name_cn',
+                    'org_name_cn',
+                    'org_short_name_en',
+                    'org_name_en',
+                    'comcnname',
+                    '股票简称',
+                    '名称',
+                    'code_name',
+                ]) or stock_name
+            else:
+                stock_name = _pick_first_non_empty(info, [
+                    '股票简称',
+                    '证券简称',
+                    '股票名称',
+                    '名称',
+                    'code_name',
+                    'name',
+                ]) or stock_name
+        except Exception:
+            pass
+
         df_raw = provider.get_stock_history(code=code, start_date=start.strftime('%Y%m%d'),
                                             end_date=end.strftime('%Y%m%d'), adjust='qfq', market_type=market_type)
         
@@ -1695,6 +1745,7 @@ def api_predict_stock():
         return jsonify({
             'success': True,
             'stock_code': code,
+            'stock_name': stock_name,
             'market_type': market_type,
             'model_type': model_type,
             'lookback': int(lookback),

@@ -258,6 +258,9 @@ body.light .loading-bar {
     color: var(--muted);
     font-size: 12px;
     font-weight: 800;
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
 }
 
 .row {

@@ -24,6 +24,8 @@
     border: 1px solid var(--border);
     box-shadow: var(--shadow);
     overflow: hidden;
+    display: flex;
+    flex-direction: column;
 }
 
 .portal-panel-header {
@@ -467,6 +469,7 @@ body.light .portal-check {
 @media (min-width: 981px) {
     .portal-news .portal-panel-body {
         height: calc(100vh - 230px);
+        flex: 1 1 auto;
         overflow: auto;
         scrollbar-width: thin;
     }

@@ -44,49 +44,11 @@
         try {
             localStorage.setItem(THEME_KEY, theme);
         } catch (e) {}
-        try { ensureMatrixBackground(); } catch (e) {}
-    }
-
-    function ensureMatrixBackground() {
-        try {
-            if (!document.body) return;
-
-            var root = document.querySelector('.matrix-container');
-            if (!root) {
-                root = document.createElement('div');
-                root.className = 'matrix-container';
-                root.setAttribute('aria-hidden', 'true');
-
-                var patterns = 5;
-                var cols = 40;
-                for (var p = 0; p < patterns; p++) {
-                    var pattern = document.createElement('div');
-                    pattern.className = 'matrix-pattern';
-                    for (var i = 0; i < cols; i++) {
-                        var col = document.createElement('div');
-                        col.className = 'matrix-column';
-                        col.style.left = (i * 25) + 'px';
-                        col.style.animationDelay = (-(1.5 + Math.random() * 2.6)).toFixed(2) + 's';
-                        col.style.animationDuration = (2.3 + Math.random() * 2.2).toFixed(2) + 's';
-
-                        var pick = (i % 5) + 1;
-                        col.classList.add('v' + pick);
-                        pattern.appendChild(col);
-                    }
-                    root.appendChild(pattern);
-                }
-
-                document.body.insertBefore(root, document.body.firstChild);
-            }
-
-            try { root.style.removeProperty('display'); } catch (e) {}
-        } catch (e) {}
     }
 
     var currentTheme = getInitialTheme();
     var isAnimating = false;
     applyTheme(currentTheme);
-    ensureMatrixBackground();
 
     function prefersReducedMotion() {
         return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
@@ -270,7 +232,6 @@
         transitionTheme(nextTheme, function () {
             toggle.disabled = false;
             isAnimating = false;
-            try { ensureMatrixBackground(); } catch (e) {}
             try {
                 document.dispatchEvent(new CustomEvent('theme-changed', { detail: { theme: nextTheme } }));
             } catch (e) {}
