@@ -779,11 +779,14 @@ body.light .footer-link:hover .footer-icon {
   box-shadow: 0 4px 20px rgba(245, 158, 11, 0.35);
   opacity: 0;
   visibility: hidden;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  z-index: 9999;
+  transition: opacity 0.3s ease, transform 0.3s ease;
+  z-index: 99999;
   display: flex;
   align-items: center;
   gap: 8px;
+  pointer-events: none;
+  max-width: 90vw;
+  white-space: nowrap;
 }
 
 .theme-toast.show {
@@ -792,10 +795,21 @@ body.light .footer-link:hover .footer-icon {
   transform: translateX(-50%) translateY(0);
 }
 
-.theme-toast svg {
+.theme-toast .theme-toast-icon {
   width: 18px;
   height: 18px;
+  min-width: 18px;
+  min-height: 18px;
+  display: inline-block;
   flex-shrink: 0;
+}
+
+.theme-toast .theme-toast-icon svg {
+  width: 18px;
+  height: 18px;
+  display: block;
+  stroke: #fff;
+  fill: none;
 }
 
 .copy-toast {

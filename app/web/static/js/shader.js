@@ -194,10 +194,10 @@
             toast = document.createElement('div');
             toast.id = 'theme-toast';
             toast.className = 'theme-toast';
-            toast.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg><span></span>';
+        toast.innerHTML = '<span class="theme-toast-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg></span><span class="theme-toast-text"></span>';
             document.body.appendChild(toast);
         }
-        toast.querySelector('span').textContent = message;
+        toast.querySelector('.theme-toast-text').textContent = message;
         toast.classList.add('show');
         setTimeout(function () {
             toast.classList.remove('show');
