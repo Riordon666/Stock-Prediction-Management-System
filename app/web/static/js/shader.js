@@ -189,23 +189,27 @@
     });
 
     function showThemeToast(message) {
-        console.log('[ShaderBG] showThemeToast: ' + message);
+        console.log('[ShaderBG] showThemeToast called: ' + message);
         // Remove old toast if exists
         var old = document.getElementById('theme-toast');
         if (old) old.remove();
 
+        // Create toast
         var toast = document.createElement('div');
         toast.id = 'theme-toast';
-        toast.className = 'theme-toast';
+        toast.className = 'theme-toast show';
+        toast.setAttribute('role', 'alert');
         toast.innerHTML = '<span class="theme-toast-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg></span><span class="theme-toast-text">' + message + '</span>';
         document.body.appendChild(toast);
-        // Force reflow then show
-        toast.offsetHeight;
-        toast.classList.add('show');
+        console.log('[ShaderBG] toast created, visible:', getComputedStyle(toast).visibility, 'opacity:', getComputedStyle(toast).opacity);
+
+        // Fade out after 5 seconds
         setTimeout(function () {
             toast.classList.remove('show');
-            setTimeout(function () { if (toast.parentNode) toast.remove(); }, 500);
-        }, 3000);
+            setTimeout(function () {
+                if (toast.parentNode) toast.remove();
+            }, 500);
+        }, 5000);
     }
 
     // Resize
