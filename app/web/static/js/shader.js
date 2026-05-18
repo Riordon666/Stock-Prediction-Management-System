@@ -232,15 +232,22 @@
         }, 5000);
     }
 
-    // Resize
+    // Resize - debounced to prevent flicker
+    var _resizeTimer = null;
+    var _lastW = 0, _lastH = 0;
     window.addEventListener('resize', function () {
-        var w = window.innerWidth, h = window.innerHeight;
-        if (typeof SunsetShader !== 'undefined' && SunsetShader.isActive()) {
-            SunsetShader.resize(w, h);
-        }
-        if (typeof DarkShader !== 'undefined' && DarkShader.isActive()) {
-            DarkShader.resize(w, h);
-        }
+        if (_resizeTimer) clearTimeout(_resizeTimer);
+        _resizeTimer = setTimeout(function () {
+            var w = window.innerWidth, h = window.innerHeight;
+            if (w === _lastW && h === _lastH) return;
+            _lastW = w; _lastH = h;
+            if (typeof SunsetShader !== 'undefined' && SunsetShader.isActive()) {
+                SunsetShader.resize(w, h);
+            }
+            if (typeof DarkShader !== 'undefined' && DarkShader.isActive()) {
+                DarkShader.resize(w, h);
+            }
+        }, 200);
     });
 
     // Visibility change - only pause/resume, don't deactivate/activate
@@ -267,14 +274,22 @@
         var theme = detectTheme();
         console.log('[ShaderBG] Initial theme: ' + theme);
 
+        // Save theme to sessionStorage so other pages know the active theme
+        try { sessionStorage.setItem('shader_theme', theme); } catch (e) {}
+
         if (theme === 'light') {
-            // Light theme: load sunset.js and activate
             setTimeout(function () { activateLight(); }, 300);
         } else {
-            // Dark theme: lazy load darkShader.js and activate
             setTimeout(function () { activateDark(); }, 300);
         }
     }
+
+    // Save theme state before page unload
+    window.addEventListener('beforeunload', function () {
+        if (_activeTheme) {
+            try { sessionStorage.setItem('shader_theme', _activeTheme); } catch (e) {}
+        }
+    });
 
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', initIfReady);

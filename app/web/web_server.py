@@ -1398,6 +1398,90 @@ def _load_prediction_model(model_type: str = 'gru') -> Any:
     feature_count = int(meta.get('feature_count') or 1)
     feature_cols = meta.get('feature_cols') or ['close']
 
+    # Pre-scan h5 file to get actual kernel shape BEFORE building model
+    actual_fc = feature_count
+    try:
+        import h5py
+        with h5py.File(str(weights), 'r') as f:
+            # Recursively find first gru/lstm cell kernel dataset
+            # Works with all TF/Keras h5 layouts
+            def _find_kernel(g, prefix=''):
+                for k in g.keys():
+                    fp = f'{prefix}/{k}' if prefix else k
+                    item = g[k]
+                    if hasattr(item, 'keys'):
+                        # It's a group - recurse
+                        r = _find_kernel(item, fp)
+                        if r is not None:
+                            return r
+                    else:
+                        # It's a dataset - check if it's a cell kernel
+                        k_low = k.lower()
+                        fp_low = fp.lower()
+                        if k_low == 'kernel' and len(item.shape) >= 1:
+                            # Accept if path contains gru/lstm AND cell
+                            if ('gru' in fp_low or 'lstm' in fp_low) and 'cell' in fp_low:
+                                dim = int(item.shape[0])
+                                logger.info('[%s] h5 scan: %s shape=%s dim=%d',
+                                    model_type.upper(), fp, list(item.shape), dim)
+                                return dim
+                            # Also accept any kernel with 2D shape (likely gru/lstm cell)
+                            # if it's inside a group that has gru/lstm in the name
+                            elif ('gru' in fp_low or 'lstm' in fp_low) and len(item.shape) == 2:
+                                dim = int(item.shape[0])
+                                logger.info('[%s] h5 scan (2D): %s shape=%s dim=%d',
+                                    model_type.upper(), fp, list(item.shape), dim)
+                                return dim
+                return None
+
+            found = _find_kernel(f)
+            if found is not None and found != feature_count:
+                actual_fc = found
+                logger.info('[%s] Pre-scan: correcting feature_count %d -> %d',
+                    model_type.upper(), feature_count, found)
+            elif found is None:
+                logger.warning('[%s] Pre-scan: no kernel found; trying manual h5 block scan', model_type.upper())
+                # Last resort: use same logic as _manual_load_gru_weights_from_h5
+                pairs = []
+                def _iter(g, prefix=''):
+                    for k2 in g.keys():
+                        fp2 = f'{prefix}/{k2}' if prefix else k2
+                        item2 = g[k2]
+                        if hasattr(item2, 'keys'):
+                            _iter(item2, fp2)
+                        else:
+                            try:
+                                pairs.append((fp2, item2[()]))
+                            except Exception:
+                                pass
+                _iter(f)
+                import re
+                for path, arr in pairs:
+                    p2 = '/' + str(path).lstrip('/')
+                    mg = re.match(r'^(.*/gru_cell[^/]*)/kernel(:0)?$', p2)
+                    if mg and hasattr(arr, 'shape') and len(arr.shape) >= 1:
+                        actual_fc = int(arr.shape[0])
+                        logger.info('[%s] Pre-scan regex: %s shape=%s dim=%d',
+                            model_type.upper(), p2, list(arr.shape), actual_fc)
+                        break
+                    ml = re.match(r'^(.*/lstm_cell[^/]*)/kernel(:0)?$', p2)
+                    if ml and hasattr(arr, 'shape') and len(arr.shape) >= 1:
+                        actual_fc = int(arr.shape[0])
+                        logger.info('[%s] Pre-scan regex: %s shape=%s dim=%d',
+                            model_type.upper(), p2, list(arr.shape), actual_fc)
+                        break
+    except Exception as ex:
+        logger.warning('[%s] Pre-scan h5 failed: %s', model_type.upper(), ex)
+
+    if actual_fc != feature_count:
+        logger.info('[%s] Correcting feature_count: meta=%d -> actual=%d', model_type.upper(), feature_count, actual_fc)
+        feature_count = actual_fc
+        meta['feature_count'] = actual_fc
+        meta['feature_cols'] = meta.get('feature_cols', ['close'])[:actual_fc]
+        # Pad if needed
+        while len(meta['feature_cols']) < actual_fc:
+            meta['feature_cols'].append('close')
+
     model = None
     if model_type == 'gru':
         from forecasting.models.gru.model import build_gru_regression_model
@@ -1418,75 +1502,9 @@ def _load_prediction_model(model_type: str = 'gru') -> Any:
         model.load_weights(str(weights))
     except Exception as e:
         err_msg = str(e)
-        # Shape mismatch: meta declares wrong feature_count, try to auto-fix
-        if 'Shape mismatch' in err_msg or 'shape' in err_msg.lower():
-            logger.warning('%s shape mismatch detected: %s. Attempting auto-fix...', model_type.upper(), err_msg)
-            try:
-                import h5py
-                with h5py.File(str(weights), 'r') as f:
-                    all_arrays = []
-                    def _collect(g):
-                        for k, v in g.items():
-                            if hasattr(v, 'keys'):
-                                _collect(v)
-                            else:
-                                try:
-                                    all.append(v[()])
-                                except Exception:
-                                    pass
-                    # Find kernel shape from first GRU/LSTM cell
-                    for key in f.keys():
-                        grp = f[key]
-                        if hasattr(grp, 'keys'):
-                            for sub_key in grp.keys():
-                                sub = grp[sub_key]
-                                if hasattr(sub, 'keys'):
-                                    for name, ds in sub.items():
-                                        if 'kernel' in name.lower() and hasattr(ds, 'shape'):
-                                            actual_input_dim = int(ds.shape[0])
-                                            if actual_input_dim != feature_count:
-                                                logger.info(
-                                                    'Auto-fixing feature_count: meta=%d actual=%d',
-                                                    feature_count, actual_input_dim,
-                                                )
-                                                feature_count = actual_input_dim
-                                                meta['feature_count'] = actual_input_dim
-                                                # Rebuild feature_cols to match
-                                                if len(feature_cols) > actual_input_dim:
-                                                    meta['feature_cols'] = feature_cols[:actual_input_dim]
-                                                break
-            except Exception:
-                pass
-
-            if feature_count != int(meta.get('feature_count') or feature_count):
-                # Rebuild model with corrected feature_count
-                if model_type == 'gru':
-                    from forecasting.models.gru.model import build_gru_regression_model
-                    model = build_gru_regression_model(
-                        lookback=lookback, feature_count=feature_count,
-                        units=units, layers=layers, dropout=dropout, learning_rate=learning_rate,
-                    )
-                elif model_type == 'lstm':
-                    from forecasting.models.lstm.model import build_lstm_regression_model
-                    model = build_lstm_regression_model(
-                        lookback=lookback, feature_count=feature_count,
-                        units=units, layers=layers, dropout=dropout, learning_rate=learning_rate,
-                    )
-                try:
-                    model.build((None, int(lookback), feature_count))
-                except Exception:
-                    pass
-                try:
-                    model.load_weights(str(weights))
-                    cache['model'] = model
-                    cache['meta'] = meta
-                    cache['mtime'] = mtime
-                    return model
-                except Exception:
-                    pass
-
+        logger.warning('[%s] load_weights failed: %s. Trying manual load...', model_type.upper(), err_msg)
         if model_type == 'gru':
-             if _manual_load_gru_weights_from_h5(model, weights):
+            if _manual_load_gru_weights_from_h5(model, weights):
                 cache['model'] = model
                 cache['meta'] = meta
                 cache['mtime'] = mtime
