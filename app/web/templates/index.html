@@ -277,8 +277,8 @@
     </div>
 
     <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
-    <script src="{{ url_for('static', filename='js/common.js') }}"></script>
-    <script src="{{ url_for('static', filename='js/index.js') }}"></script>
-    <script src="{{ url_for('static', filename='js/shader.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/common.js', v=static_version) }}"></script>
+    <script src="{{ url_for('static', filename='js/index.js', v=static_version) }}"></script>
+    <script src="{{ url_for('static', filename='js/shader.js', v=static_version) }}"></script>
 </body>
 </html>

@@ -222,9 +222,9 @@
         </footer>
     </div>
 
-    <script src="{{ url_for('static', filename='js/common.js') }}"></script>
-    <script src="{{ url_for('static', filename='js/predict.js') }}"></script>
-    <script src="{{ url_for('static', filename='js/shader.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/common.js', v=static_version) }}"></script>
+    <script src="{{ url_for('static', filename='js/predict.js', v=static_version) }}"></script>
+    <script src="{{ url_for('static', filename='js/shader.js', v=static_version) }}"></script>
 </body>
 
 </html>

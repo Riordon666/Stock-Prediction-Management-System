@@ -38,6 +38,7 @@ app = Flask(__name__)
 app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0  # No cache for development
 app.config['JSON_SORT_KEYS'] = False  # Faster JSON response
 app.config['JSONIFY_MIMETYPE'] = 'application/json; charset=utf-8'
+app.config['STATIC_VERSION'] = str(int(time.time()))  # Cache busting for static files
 
 # Disable caching for development
 @app.after_request
@@ -47,6 +48,11 @@ def add_no_cache_headers(response):
         response.headers['Pragma'] = 'no-cache'
         response.headers['Expires'] = '0'
     return response
+
+# Inject static version into all templates for cache busting
+@app.context_processor
+def inject_static_version():
+    return dict(static_version=app.config['STATIC_VERSION'])
 
 # Enable gzip compression for responses
 try:
