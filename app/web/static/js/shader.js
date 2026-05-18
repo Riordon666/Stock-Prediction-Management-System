@@ -189,26 +189,46 @@
     });
 
     function showThemeToast(message) {
-        console.log('[ShaderBG] showThemeToast called: ' + message);
-        // Remove old toast if exists
+        console.log('[ShaderBG] showThemeToast: ' + message);
         var old = document.getElementById('theme-toast');
         if (old) old.remove();
 
-        // Create toast
         var toast = document.createElement('div');
         toast.id = 'theme-toast';
-        toast.className = 'theme-toast show';
         toast.setAttribute('role', 'alert');
-        toast.innerHTML = '<span class="theme-toast-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg></span><span class="theme-toast-text">' + message + '</span>';
-        document.body.appendChild(toast);
-        console.log('[ShaderBG] toast created, visible:', getComputedStyle(toast).visibility, 'opacity:', getComputedStyle(toast).opacity);
+        // Use inline styles to guarantee visibility regardless of CSS cache
+        var s = toast.style;
+        s.position = 'fixed';
+        s.top = '80px';
+        s.left = '50%';
+        s.transform = 'translateX(-50%)';
+        s.background = 'linear-gradient(135deg, #f59e0b, #d97706)';
+        s.color = '#fff';
+        s.padding = '10px 24px';
+        s.borderRadius = '24px';
+        s.fontSize = '14px';
+        s.fontWeight = '600';
+        s.boxShadow = '0 4px 20px rgba(245,158,11,0.35)';
+        s.zIndex = '999999';
+        s.display = 'flex';
+        s.alignItems = 'center';
+        s.gap = '8px';
+        s.whiteSpace = 'nowrap';
+        s.maxWidth = '90vw';
+        s.opacity = '0';
+        s.transition = 'opacity 0.3s ease';
+        s.fontFamily = 'ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif';
 
-        // Fade out after 5 seconds
+        toast.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18" style="flex-shrink:0"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg><span>' + message + '</span>';
+
+        document.body.appendChild(toast);
+        // Force reflow then fade in
+        void toast.offsetHeight;
+        s.opacity = '1';
+
         setTimeout(function () {
-            toast.classList.remove('show');
-            setTimeout(function () {
-                if (toast.parentNode) toast.remove();
-            }, 500);
+            s.opacity = '0';
+            setTimeout(function () { if (toast.parentNode) toast.remove(); }, 400);
         }, 5000);
     }
 
