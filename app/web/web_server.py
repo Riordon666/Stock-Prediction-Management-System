@@ -473,18 +473,16 @@ def _fetch_tophub_today_hotspots(limit: int) -> Dict[str, Any]:
 
 
 def _fetch_alternative_hotspots(limit: int) -> Dict[str, Any]:
-    """Fetch hotspots from cls.cn - sort by share_num to get hot articles"""
+    """Fetch hotspots from Eastmoney 7x24 live feed via xcvts.cn proxy"""
     items = []
 
-    # Try cls.cn telegraph API directly (faster than parsing HTML)
     try:
-        url = 'https://www.cls.cn/nodeapi/updateTelegraphList'
+        url = 'https://api.xcvts.cn/api/hotlist/eastmoney?apiKey=965de292ac97cd7d6101a7de422f0cd5'
         req = urllib.request.Request(
             url,
             headers={
                 'Accept': 'application/json,*/*',
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                'Referer': 'https://www.cls.cn/',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             },
             method='GET',
         )
@@ -492,97 +490,35 @@ def _fetch_alternative_hotspots(limit: int) -> Dict[str, Any]:
         raw = _urlopen_read_text(req, timeout=10)
         if raw:
             j = json.loads(raw)
-            data = j.get('data') or {}
-            roll_data = data.get('roll_data') or []
+            if not j.get('success'):
+                logger.warning('eastmoney API returned success=false: %s', j.get('msg', ''))
+                return {'items': [], 'source': ''}
 
-            # Sort by share_num (descending) to get hot articles
-            sorted_items = sorted(
-                roll_data,
-                key=lambda x: int(x.get('share_num') or 0),
-                reverse=True
-            )
+            data_list = j.get('data') or []
 
-            for item in sorted_items:
+            for item in data_list:
                 if len(items) >= limit:
                     break
-                title = item.get('title') or item.get('content') or ''
+                title = item.get('title') or ''
                 if not title:
                     continue
-                link = item.get('shareurl') or f"https://www.cls.cn/detail/{item.get('id')}"
-                share_num = item.get('share_num') or 0
+                link = item.get('url') or item.get('mobileUrl') or ''
+                pub_time = item.get('time') or ''
+
                 items.append({
                     'title': str(title).strip()[:100],
                     'url': link,
-                    'extra': f'-分享数:{share_num}'
+                    'extra': pub_time,
                 })
 
             if items:
-                logger.info(f'fetched {len(items)} hotspots from cls.cn API (sorted by share_num)')
-                return {'items': items, 'source': 'cls_cn_hot'}
+                logger.info(f'fetched {len(items)} hotspots from eastmoney (xcvts.cn)')
+                return {'items': items, 'source': 'eastmoney'}
 
     except Exception as e:
-        logger.warning('fetch cls.cn telegraph API failed: %s', e)
+        logger.warning('fetch eastmoney hotspots failed: %s', e)
 
-    # Fallback: Try cls.cn telegraph page HTML parsing
-    try:
-        url = 'https://www.cls.cn/telegraph'
-        req = urllib.request.Request(
-            url,
-            headers={
-                'Accept': 'text/html,application/xhtml+xml,*/*',
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept-Language': 'zh-CN,zh;q=0.9',
-            },
-            method='GET',
-        )
-
-        raw = _urlopen_read_text(req, timeout=15)
-        if raw and len(raw) > 500:
-            m = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', raw, re.DOTALL)
-            if m:
-                try:
-                    j = json.loads(m.group(1))
-                    props = j.get('props') or {}
-                    initial = props.get('initialState') or {}
-                    telegraph = initial.get('telegraph') or {}
-                    tlist = telegraph.get('telegraphList') or []
-
-                    # Sort by share_num (descending) to get hot articles
-                    sorted_items = sorted(
-                        tlist,
-                        key=lambda x: int(x.get('share_num') or 0),
-                        reverse=True
-                    )
-
-                    for item in sorted_items:
-                        if len(items) >= limit:
-                            break
-                        title = item.get('title') or item.get('content') or ''
-                        if not title:
-                            continue
-                        link = (
-                            item.get('shareurl')
-                            or item.get('share_url')
-                            or item.get('shareUrl')
-                            or item.get('url')
-                            or 'https://www.cls.cn/telegraph'
-                        )
-                        share_num = item.get('share_num') or 0
-                        items.append({
-                            'title': str(title).strip()[:100],
-                            'url': link,
-                            'extra': f'hot:{share_num}'
-                        })
-
-                    if items:
-                        logger.info(f'fetched {len(items)} hotspots from cls.cn telegraph (sorted by share_num)')
-                        return {'items': items, 'source': 'cls_cn_hot'}
-                except Exception as e:
-                    logger.warning('parse cls.cn json failed: %s', e)
-    except Exception as e:
-        logger.warning('fetch cls.cn telegraph failed: %s', e)
-
-    return {'items': items, 'source': 'cls_cn_hot' if items else ''}
+    return {'items': items, 'source': 'eastmoney' if items else ''}
 
 
 @app.route('/api/latest_news')
@@ -680,12 +616,12 @@ def api_hotspots():
                 'source': cached_source,
             })
 
-    # Fetch order: tophub.today (works locally) -> tophubdata -> cls.cn (fallback)
-    data = _fetch_tophub_today_hotspots(limit)
+    # Fetch order: eastmoney (xcvts.cn, fast) -> tophub data sources (fallback)
+    data = _fetch_alternative_hotspots(limit)
+    if not (data.get('items') or []):
+        data = _fetch_tophub_today_hotspots(limit)
     if not (data.get('items') or []):
         data = _fetch_tophubdata_hotspots(limit)
-    if not (data.get('items') or []):
-        data = _fetch_alternative_hotspots(limit)
 
     items = data.get('items') or []
     source = data.get('source') or ''

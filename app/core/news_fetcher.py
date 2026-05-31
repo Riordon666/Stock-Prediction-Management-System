@@ -81,28 +81,37 @@ class NewsFetcher:
 
     def fetch_and_save(self) -> bool:
         try:
-            try:
-                import akshare as ak
-            except Exception as e:
-                logger.warning("akshare 未安装或不可用，无法获取快讯: %s", e)
-                return False
+            import urllib.request
 
             now = datetime.now()
-            logger.info("开始获取财联社电报数据")
+            logger.info("开始获取快讯数据 (via xcvts.cn)")
 
-            df = ak.stock_info_global_cls(symbol="全部")
-            if df is None or df.empty:
-                logger.warning("获取的财联社电报数据为空")
+            req = urllib.request.Request(
+                'https://api.xcvts.cn/api/hotlist/eastmoney?apiKey=965de292ac97cd7d6101a7de422f0cd5',
+                headers={
+                    'Accept': 'application/json,*/*',
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                },
+                method='GET',
+            )
+            raw = urllib.request.urlopen(req, timeout=15).read().decode('utf-8')
+            j = json.loads(raw)
+
+            if not j.get('success'):
+                logger.warning("xcvts.cn API 返回失败: %s", j.get('msg', ''))
                 return False
 
-            total_count = 0
+            data_list = j.get('data') or []
+            if not data_list:
+                logger.warning("获取的快讯数据为空")
+                return False
+
+            total_count = len(data_list)
             new_count = 0
             news_list: List[Dict[str, Any]] = []
 
-            for _, row in df.iterrows():
-                total_count += 1
-
-                content = str(row.get("内容", "") or "")
+            for item in data_list:
+                content = str(item.get('content') or item.get('title') or '')
                 if not content.strip():
                     continue
 
@@ -113,24 +122,17 @@ class NewsFetcher:
                 self.news_hashes.add(content_hash)
                 new_count += 1
 
-                pub_date = row.get("发布日期", "")
-                if isinstance(pub_date, (datetime, date)):
-                    pub_date = pub_date.isoformat()
-                else:
-                    pub_date = str(pub_date)
-
-                pub_time = row.get("发布时间", "")
-                if isinstance(pub_time, (datetime, date)):
-                    pub_time = pub_time.isoformat()
-                else:
-                    pub_time = str(pub_time)
+                time_str = str(item.get('time') or '')
+                pub_date = time_str[:10] if len(time_str) >= 10 else ''
+                pub_time = time_str[11:19] if len(time_str) >= 19 else ''
 
                 news_item = {
-                    "title": str(row.get("标题", "") or ""),
+                    "title": str(item.get('title') or ''),
                     "content": content,
                     "date": pub_date,
                     "time": pub_time,
-                    "datetime": f"{pub_date} {pub_time}",
+                    "datetime": time_str,
+                    "url": str(item.get('url') or ''),
                     "fetch_time": now.strftime('%Y-%m-%d %H:%M:%S'),
                     "hash": content_hash,
                 }
